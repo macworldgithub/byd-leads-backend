@@ -9,6 +9,7 @@ const inventoryRouter = require("./routes/inventory");
 const conversationsRouter = require("./routes/conversations");
 const appointmentsRouter = require("./routes/appointments");
 const dashboardRouter = require("./routes/dashboard");
+const settingsRouter = require("./routes/settings");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -33,6 +34,7 @@ app.use("/api/dealerships", dealershipsRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/conversations", conversationsRouter);
 app.use("/api/appointments", appointmentsRouter);
+app.use("/api/settings", settingsRouter);
 
 // ── 404 handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {
