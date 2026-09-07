@@ -33,7 +33,28 @@ router.get("/", async (req, res) => {
       ];
     }
 
+    const isPaginated = paginated === "true" || (page !== undefined && page !== "");
+    if (isPaginated) {
+      const pageNum = Math.max(1, parseInt(page) || 1);
+      const pageSize = Math.min(200, Math.max(1, parseInt(limit) || 50));
+      const skip = (pageNum - 1) * pageSize;
+
+      const [items, total] = await Promise.all([
+        Inventory.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(pageSize),
+        Inventory.countDocuments(filter),
+      ]);
+
+      return res.json({
+        data: items,
+        total,
+        page: pageNum,
+        totalPages: Math.ceil(total / pageSize) || 1,
+        limit: pageSize,
+      });
+    }
+
     const items = await Inventory.find(filter).sort({ updatedAt: -1 });
+    res.setHeader("X-Total-Count", items.length);
     res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });

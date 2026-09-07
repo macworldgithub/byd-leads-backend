@@ -32,22 +32,35 @@ router.get("/", async (req, res) => {
       ];
     }
 
-    // Pagination
-    const pageNum = Math.max(1, parseInt(page) || 1);
-    const pageSize = Math.min(100, Math.max(1, parseInt(limit) || 50));
-    const skip = (pageNum - 1) * pageSize;
-
     // Sort
     let sortObj = { createdAt: -1 };
     if (sort === "score") sortObj = { score: -1 };
     if (sort === "name") sortObj = { name: 1 };
     if (sort === "received") sortObj = { receivedDaysAgo: 1 };
 
+    const isPaginated = paginated === "true" || (page !== undefined && page !== "");
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const pageSize = Math.min(200, Math.max(1, parseInt(limit) || 50));
+    const skip = (pageNum - 1) * pageSize;
+
     const [leads, total] = await Promise.all([
-      Lead.find(filter).sort(sortObj).skip(skip).limit(pageSize),
+      isPaginated
+        ? Lead.find(filter).sort(sortObj).skip(skip).limit(pageSize)
+        : Lead.find(filter).sort(sortObj).limit(pageSize),
       Lead.countDocuments(filter),
     ]);
 
+    if (isPaginated) {
+      return res.json({
+        data: leads,
+        total,
+        page: pageNum,
+        totalPages: Math.ceil(total / pageSize) || 1,
+        limit: pageSize,
+      });
+    }
+
+    res.setHeader("X-Total-Count", total);
     res.json(leads);
   } catch (err) {
     res.status(500).json({ error: err.message });
