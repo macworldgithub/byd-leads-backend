@@ -38,8 +38,25 @@ const leadSchema = new mongoose.Schema(
     // ── Platform field ─────────────────────────────────────────────────────
     platform: {
       type: String,
-      enum: ["manual", "autogate", "sms"],
+      enum: ["manual", "autogate", "sms", "virtualyard"],
       default: "manual",
+    },
+
+    // ── Virtualyard specific fields ─────────────────────────────────────────
+    virtualyardId: { type: String, default: null, index: true },
+    customerId: { type: String, default: null },
+    vyStage: { type: String, default: "" },
+    vyStageText: { type: String, default: "" },
+    vyTab: { type: String, default: "" },
+    vyStatus: { type: String, default: "" },
+    assignedTo: { type: String, default: "" },
+    lastContact: { type: String, default: "" },
+    leadDate: { type: Date, default: null },
+    testDrive: {
+      testDriveDate: { type: Date, default: null },
+      location: { type: String, default: "" },
+      status: { type: String, default: "" },
+      confirmed: { type: Boolean, default: false },
     },
 
     // ── Autogate / Nextgate specific fields ────────────────────────────────

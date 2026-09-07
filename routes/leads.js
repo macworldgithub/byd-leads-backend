@@ -26,6 +26,9 @@ router.get("/", async (req, res) => {
         { dealer: { $regex: q, $options: "i" } },
         { leadSource: { $regex: q, $options: "i" } },
         { autogateId: { $regex: q, $options: "i" } },
+        { virtualyardId: { $regex: q, $options: "i" } },
+        { assignedTo: { $regex: q, $options: "i" } },
+        { vyStatus: { $regex: q, $options: "i" } },
       ];
     }
 
