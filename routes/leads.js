@@ -4,6 +4,12 @@ const Lead = require("../models/Lead");
 const Conversation = require("../models/Conversation");
 const AuditTrail = require("../models/AuditTrail");
 
+// Helper to escape regex special characters
+function escapeRegex(str) {
+  if (typeof str !== "string") return "";
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // GET all leads (with optional filters + pagination)
 router.get("/", async (req, res) => {
   try {
@@ -11,24 +17,25 @@ router.get("/", async (req, res) => {
     const filter = {};
 
     if (stage) filter.stage = stage;
-    if (dealer) filter.dealer = { $regex: dealer, $options: "i" };
+    if (dealer) filter.dealer = { $regex: escapeRegex(dealer), $options: "i" };
     if (tag) filter.tag = tag;
     if (status) filter.status = status;
     if (platform) filter.platform = platform;
 
     if (q) {
+      const safeQ = escapeRegex(q);
       filter.$or = [
-        { name: { $regex: q, $options: "i" } },
-        { vehicle: { $regex: q, $options: "i" } },
-        { phone: { $regex: q, $options: "i" } },
-        { stockNum: { $regex: q, $options: "i" } },
-        { email: { $regex: q, $options: "i" } },
-        { dealer: { $regex: q, $options: "i" } },
-        { leadSource: { $regex: q, $options: "i" } },
-        { autogateId: { $regex: q, $options: "i" } },
-        { virtualyardId: { $regex: q, $options: "i" } },
-        { assignedTo: { $regex: q, $options: "i" } },
-        { vyStatus: { $regex: q, $options: "i" } },
+        { name: { $regex: safeQ, $options: "i" } },
+        { vehicle: { $regex: safeQ, $options: "i" } },
+        { phone: { $regex: safeQ, $options: "i" } },
+        { stockNum: { $regex: safeQ, $options: "i" } },
+        { email: { $regex: safeQ, $options: "i" } },
+        { dealer: { $regex: safeQ, $options: "i" } },
+        { leadSource: { $regex: safeQ, $options: "i" } },
+        { autogateId: { $regex: safeQ, $options: "i" } },
+        { virtualyardId: { $regex: safeQ, $options: "i" } },
+        { assignedTo: { $regex: safeQ, $options: "i" } },
+        { vyStatus: { $regex: safeQ, $options: "i" } },
       ];
     }
 
@@ -94,18 +101,19 @@ router.get("/stats", async (req, res) => {
     const filter = {};
 
     if (stage) filter.stage = stage;
-    if (dealer) filter.dealer = { $regex: dealer, $options: "i" };
+    if (dealer) filter.dealer = { $regex: escapeRegex(dealer), $options: "i" };
     if (tag) filter.tag = tag;
     if (status) filter.status = status;
 
     if (q) {
+      const safeQ = escapeRegex(q);
       filter.$or = [
-        { name: { $regex: q, $options: "i" } },
-        { vehicle: { $regex: q, $options: "i" } },
-        { phone: { $regex: q, $options: "i" } },
-        { stockNum: { $regex: q, $options: "i" } },
-        { email: { $regex: q, $options: "i" } },
-        { dealer: { $regex: q, $options: "i" } },
+        { name: { $regex: safeQ, $options: "i" } },
+        { vehicle: { $regex: safeQ, $options: "i" } },
+        { phone: { $regex: safeQ, $options: "i" } },
+        { stockNum: { $regex: safeQ, $options: "i" } },
+        { email: { $regex: safeQ, $options: "i" } },
+        { dealer: { $regex: safeQ, $options: "i" } },
       ];
     }
 

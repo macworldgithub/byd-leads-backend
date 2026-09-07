@@ -87,6 +87,12 @@ async function findOrCreateConversation(query) {
   return convo;
 }
 
+// Helper to escape regex special characters
+function escapeRegex(str) {
+  if (typeof str !== "string") return "";
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // GET all conversations (synchronized with existing leads)
 router.get("/", async (req, res) => {
   try {
@@ -95,9 +101,10 @@ router.get("/", async (req, res) => {
     if (control === "ai") filter.control = "AI active";
     if (control === "human") filter.control = { $regex: "Human", $options: "i" };
     if (q) {
+      const safeQ = escapeRegex(q);
       filter.$or = [
-        { prospectName: { $regex: q, $options: "i" } },
-        { phone: { $regex: q, $options: "i" } },
+        { prospectName: { $regex: safeQ, $options: "i" } },
+        { phone: { $regex: safeQ, $options: "i" } },
       ];
     }
 

@@ -2,34 +2,38 @@ const express = require("express");
 const router = express.Router();
 const Inventory = require("../models/Inventory");
 
+// Helper to escape regex special characters
+function escapeRegex(str) {
+  if (typeof str !== "string") return "";
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // GET all inventory (with optional filters)
 router.get("/", async (req, res) => {
   try {
     const { model, status, location, condition, platform, q, page, limit, paginated } = req.query;
     const filter = {};
 
-    if (model) {
-      filter.$or = filter.$or || [];
-      filter.model = { $regex: model, $options: "i" };
-    }
+    if (model) filter.model = { $regex: escapeRegex(model), $options: "i" };
     if (status) filter.status = status;
-    if (location) filter.location = { $regex: location, $options: "i" };
+    if (location) filter.location = { $regex: escapeRegex(location), $options: "i" };
     if (condition) filter.condition = condition;
     if (platform) filter.platform = platform;
 
     if (q) {
+      const safeQ = escapeRegex(q);
       filter.$or = [
-        { stock: { $regex: q, $options: "i" } },
-        { model: { $regex: q, $options: "i" } },
-        { paint: { $regex: q, $options: "i" } },
-        { title: { $regex: q, $options: "i" } },
-        { identifier: { $regex: q, $options: "i" } },
-        { networkId: { $regex: q, $options: "i" } },
-        { "specifications.model": { $regex: q, $options: "i" } },
-        { "specifications.colour": { $regex: q, $options: "i" } },
-        { "specifications.manufacturerColour": { $regex: q, $options: "i" } },
-        { "registration.rego": { $regex: q, $options: "i" } },
-        { "registration.vin": { $regex: q, $options: "i" } },
+        { stock: { $regex: safeQ, $options: "i" } },
+        { model: { $regex: safeQ, $options: "i" } },
+        { paint: { $regex: safeQ, $options: "i" } },
+        { title: { $regex: safeQ, $options: "i" } },
+        { identifier: { $regex: safeQ, $options: "i" } },
+        { networkId: { $regex: safeQ, $options: "i" } },
+        { "specifications.model": { $regex: safeQ, $options: "i" } },
+        { "specifications.colour": { $regex: safeQ, $options: "i" } },
+        { "specifications.manufacturerColour": { $regex: safeQ, $options: "i" } },
+        { "registration.rego": { $regex: safeQ, $options: "i" } },
+        { "registration.vin": { $regex: safeQ, $options: "i" } },
       ];
     }
 
