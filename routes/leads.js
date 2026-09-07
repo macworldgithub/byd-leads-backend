@@ -7,7 +7,7 @@ const AuditTrail = require("../models/AuditTrail");
 // GET all leads (with optional filters + pagination)
 router.get("/", async (req, res) => {
   try {
-    const { stage, dealer, tag, status, platform, q, page, limit, sort } = req.query;
+    const { stage, dealer, tag, status, platform, q, page, limit, sort, paginated } = req.query;
     const filter = {};
 
     if (stage) filter.stage = stage;

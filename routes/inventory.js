@@ -5,7 +5,7 @@ const Inventory = require("../models/Inventory");
 // GET all inventory (with optional filters)
 router.get("/", async (req, res) => {
   try {
-    const { model, status, location, condition, platform, q } = req.query;
+    const { model, status, location, condition, platform, q, page, limit, paginated } = req.query;
     const filter = {};
 
     if (model) {
