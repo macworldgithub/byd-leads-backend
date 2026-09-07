@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const leadSchema = new mongoose.Schema(
   {
+    // ── Core CRM fields ────────────────────────────────────────────────────
     name: { type: String, required: true },
     vehicle: { type: String, default: "" },
     dealer: { type: String, default: "" },
@@ -33,6 +34,43 @@ const leadSchema = new mongoose.Schema(
     enquiryNote: { type: String, default: "" },
     price: { type: String, default: "" },
     paintColor: { type: String, default: "" },
+
+    // ── Platform field ─────────────────────────────────────────────────────
+    platform: {
+      type: String,
+      enum: ["manual", "autogate", "sms"],
+      default: "manual",
+    },
+
+    // ── Autogate / Nextgate specific fields ────────────────────────────────
+    autogateId: { type: String, default: null },          // customer UUID from Autogate
+    autogateLeadId: { type: String, default: null },      // lead UUID from Autogate
+    leadIdShort: { type: String, default: null },         // short display ID e.g. "936fddec"
+    homePhone: { type: String, default: "" },
+    customerType: { type: String, default: "Individual" },// "Individual" | "Business"
+    dealerName: { type: String, default: "" },            // full dealer display name
+    priority: { type: String, default: "Not Set" },
+    leadType: { type: String, default: "" },              // "GENERAL" etc.
+    leadSource: { type: String, default: "" },            // "Call connect", "Carsales" etc.
+    opportunity: { type: String, default: "" },           // "Buy", "Sell" etc.
+    specificationId: { type: String, default: null },     // vehicle spec UUID
+    multipleVehicleEnquiries: { type: Boolean, default: false },
+    isArchived: { type: Boolean, default: false },
+    leadStage: { type: String, default: "" },             // Autogate's own stage label
+    tags: [
+      {
+        label: { type: String },
+        friendlyLabel: { type: String },
+      },
+    ],
+    leadStats: {
+      emailCount: { type: Number, default: 0 },
+      smsCount: { type: Number, default: 0 },
+      phoneCallCount: { type: Number, default: 0 },
+      appointmentCount: { type: Number, default: 0 },
+    },
+    leadCreatedDate: { type: Date, default: null },
+    allocatedPersonFullName: { type: String, default: "" },
   },
   { timestamps: true }
 );

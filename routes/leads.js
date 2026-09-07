@@ -6,13 +6,14 @@ const Conversation = require("../models/Conversation");
 // GET all leads (with optional filters + pagination)
 router.get("/", async (req, res) => {
   try {
-    const { stage, dealer, tag, status, q, page, limit, sort } = req.query;
+    const { stage, dealer, tag, status, platform, q, page, limit, sort } = req.query;
     const filter = {};
 
     if (stage) filter.stage = stage;
     if (dealer) filter.dealer = { $regex: dealer, $options: "i" };
     if (tag) filter.tag = tag;
     if (status) filter.status = status;
+    if (platform) filter.platform = platform;
 
     if (q) {
       filter.$or = [
@@ -22,6 +23,8 @@ router.get("/", async (req, res) => {
         { stockNum: { $regex: q, $options: "i" } },
         { email: { $regex: q, $options: "i" } },
         { dealer: { $regex: q, $options: "i" } },
+        { leadSource: { $regex: q, $options: "i" } },
+        { autogateId: { $regex: q, $options: "i" } },
       ];
     }
 

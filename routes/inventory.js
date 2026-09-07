@@ -5,19 +5,35 @@ const Inventory = require("../models/Inventory");
 // GET all inventory (with optional filters)
 router.get("/", async (req, res) => {
   try {
-    const { model, status, location, q } = req.query;
+    const { model, status, location, condition, platform, q } = req.query;
     const filter = {};
-    if (model) filter.model = { $regex: model, $options: "i" };
+
+    if (model) {
+      filter.$or = filter.$or || [];
+      filter.model = { $regex: model, $options: "i" };
+    }
     if (status) filter.status = status;
     if (location) filter.location = { $regex: location, $options: "i" };
+    if (condition) filter.condition = condition;
+    if (platform) filter.platform = platform;
+
     if (q) {
       filter.$or = [
         { stock: { $regex: q, $options: "i" } },
         { model: { $regex: q, $options: "i" } },
         { paint: { $regex: q, $options: "i" } },
+        { title: { $regex: q, $options: "i" } },
+        { identifier: { $regex: q, $options: "i" } },
+        { networkId: { $regex: q, $options: "i" } },
+        { "specifications.model": { $regex: q, $options: "i" } },
+        { "specifications.colour": { $regex: q, $options: "i" } },
+        { "specifications.manufacturerColour": { $regex: q, $options: "i" } },
+        { "registration.rego": { $regex: q, $options: "i" } },
+        { "registration.vin": { $regex: q, $options: "i" } },
       ];
     }
-    const items = await Inventory.find(filter).sort({ stock: 1 });
+
+    const items = await Inventory.find(filter).sort({ updatedAt: -1 });
     res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });
