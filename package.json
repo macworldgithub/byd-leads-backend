@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "seed": "node seed/seed.js"
+    "seed": "node seed/seed.js",
+    "seed:both": "node seed/seed-both.js",
+    "seed:virtualyard": "node seed/seed-virtualyard.js",
+    "seed:autogate": "node seed/seed-autogate.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

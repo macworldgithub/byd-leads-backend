@@ -43,12 +43,16 @@ const leadSchema = new mongoose.Schema(
     },
 
     // ── Virtualyard specific fields ─────────────────────────────────────────
+    leadId: { type: String, default: null, index: true },
     virtualyardId: { type: String, default: null, index: true },
     customerId: { type: String, default: null },
     vyStage: { type: String, default: "" },
     vyStageText: { type: String, default: "" },
     vyTab: { type: String, default: "" },
     vyStatus: { type: String, default: "" },
+    stageText: { type: String, default: "" },
+    tab: { type: String, default: "" },
+    previewText: { type: String, default: "" },
     assignedTo: { type: String, default: "" },
     lastContact: { type: String, default: "" },
     leadDate: { type: Date, default: null },
