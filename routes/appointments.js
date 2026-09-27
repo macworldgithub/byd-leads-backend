@@ -2,14 +2,74 @@ const express = require("express");
 const router = express.Router();
 const Appointment = require("../models/Appointment");
 
-// GET all appointments
+// GET all appointments with pagination & location/yard filtering
 router.get("/", async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, type, location, yard, dealership, site, q, page = 1, limit = 20 } = req.query;
     const filter = {};
-    if (status) filter.status = status;
-    const appts = await Appointment.find(filter).sort({ createdAt: 1 });
-    res.json(appts);
+
+    if (status && status !== "All") {
+      filter.status = status;
+    }
+
+    if (type && type !== "All") {
+      filter.type = type;
+    }
+
+    const locVal = location || yard || dealership || site;
+    if (locVal && locVal !== "All" && locVal !== "All Locations" && locVal !== "All Yards" && locVal !== "All Sites") {
+      filter.$or = [
+        { dealership: { $regex: locVal, $options: "i" } },
+        { location: { $regex: locVal, $options: "i" } },
+        { site: { $regex: locVal, $options: "i" } },
+        { yard: { $regex: locVal, $options: "i" } },
+        { "vehicle.yard": { $regex: locVal, $options: "i" } },
+      ];
+    }
+
+    if (q && q.trim()) {
+      const qRegex = { $regex: q.trim(), $options: "i" };
+      const searchConditions = [
+        { prospectName: qRegex },
+        { phone: qRegex },
+        { email: qRegex },
+        { vehicle: qRegex },
+        { "vehicle.raw": qRegex },
+      ];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: searchConditions }];
+        delete filter.$or;
+      } else {
+        filter.$or = searchConditions;
+      }
+    }
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 20);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [appts, total] = await Promise.all([
+      Appointment.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limitNum).lean(),
+      Appointment.countDocuments(filter),
+    ]);
+
+    const pages = Math.ceil(total / limitNum) || 1;
+
+    // Check if client expects raw array
+    if (req.query.raw === "true") {
+      return res.json(appts);
+    }
+
+    res.json({
+      success: true,
+      data: appts,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        pages,
+      },
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
