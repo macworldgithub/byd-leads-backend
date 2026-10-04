@@ -17,9 +17,32 @@ function timeAgo(date) {
   return `${days}d ago`;
 }
 
+function escapeRegex(str) {
+  if (typeof str !== "string") return "";
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // GET /api/dashboard — dynamic aggregated stats for the dashboard page
 router.get("/", async (req, res) => {
   try {
+    const { dealer, yard, location } = req.query;
+    const dealerVal = dealer || yard || location;
+    const leadFilter = {};
+    const apptFilter = {};
+    const invFilter = {};
+    const convFilter = {};
+
+    if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
+      const safe = escapeRegex(dealerVal);
+      leadFilter.dealer = { $regex: safe, $options: "i" };
+      apptFilter.$or = [
+        { location: { $regex: safe, $options: "i" } },
+        { dealership: { $regex: safe, $options: "i" } },
+      ];
+      invFilter.location = { $regex: safe, $options: "i" };
+      convFilter.dealer = { $regex: safe, $options: "i" };
+    }
+
     const [
       totalLeads,
       aiQualifying,
@@ -33,17 +56,17 @@ router.get("/", async (req, res) => {
       invAvailable,
       invTotal,
     ] = await Promise.all([
-      Lead.countDocuments(),
-      Lead.countDocuments({ stage: "AI QUALIFYING" }),
-      Lead.countDocuments({ stage: "TEST DRIVE BOOKED" }),
-      Lead.countDocuments({ control: { $regex: "Human", $options: "i" } }),
-      Appointment.countDocuments({ status: "Confirmed" }),
-      Appointment.countDocuments(),
-      Conversation.find({}, "messages lastMessageAt"),
-      Lead.find().sort({ createdAt: -1 }).limit(4),
+      Lead.countDocuments(leadFilter),
+      Lead.countDocuments({ ...leadFilter, stage: "AI QUALIFYING" }),
+      Lead.countDocuments({ ...leadFilter, stage: "TEST DRIVE BOOKED" }),
+      Lead.countDocuments({ ...leadFilter, control: { $regex: "Human", $options: "i" } }),
+      Appointment.countDocuments({ ...apptFilter, status: "Confirmed" }),
+      Appointment.countDocuments(apptFilter),
+      Conversation.find(convFilter, "messages lastMessageAt"),
+      Lead.find(leadFilter).sort({ createdAt: -1 }).limit(4),
       AuditTrail.find().sort({ createdAt: -1 }).limit(5),
-      Inventory.countDocuments({ status: "Available" }),
-      Inventory.countDocuments(),
+      Inventory.countDocuments({ ...invFilter, status: "Available" }),
+      Inventory.countDocuments(invFilter),
     ]);
 
     // Count inbound & outbound messages
@@ -65,9 +88,11 @@ router.get("/", async (req, res) => {
     // Funnel counts (Live progression)
     const imported = totalLeads;
     const engaged = await Lead.countDocuments({
+      ...leadFilter,
       stage: { $in: ["AI QUALIFYING", "TEST DRIVE BOOKED", "DELIVERED"] },
     });
     const qualified = await Lead.countDocuments({
+      ...leadFilter,
       stage: { $in: ["AI QUALIFYING", "TEST DRIVE BOOKED", "DELIVERED"] },
       score: { $gte: 50 },
     });

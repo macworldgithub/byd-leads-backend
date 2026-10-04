@@ -16,7 +16,10 @@ router.get("/", async (req, res) => {
 
     if (model) filter.model = { $regex: escapeRegex(model), $options: "i" };
     if (status) filter.status = status;
-    if (location) filter.location = { $regex: escapeRegex(location), $options: "i" };
+    const locVal = location || req.query.yard || req.query.dealer;
+    if (locVal && locVal !== "all" && locVal !== "All" && locVal !== "All Locations" && locVal !== "All Yards") {
+      filter.location = { $regex: escapeRegex(locVal), $options: "i" };
+    }
     if (condition) filter.condition = condition;
     if (platform) filter.platform = platform;
 

@@ -110,10 +110,14 @@ function escapeRegex(str) {
 // GET all conversations (synchronized with existing leads)
 router.get("/", async (req, res) => {
   try {
-    const { control, q } = req.query;
+    const { control, q, dealer, yard, location } = req.query;
     const filter = {};
     if (control === "ai") filter.control = "AI active";
     if (control === "human") filter.control = { $regex: "Human", $options: "i" };
+    const dealerVal = dealer || yard || location;
+    if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
+      filter.dealer = { $regex: escapeRegex(dealerVal), $options: "i" };
+    }
     if (q) {
       const safeQ = escapeRegex(q);
       filter.$or = [

@@ -16,8 +16,8 @@ router.get("/", async (req, res) => {
       filter.type = type;
     }
 
-    const locVal = location || yard || dealership || site;
-    if (locVal && locVal !== "All" && locVal !== "All Locations" && locVal !== "All Yards" && locVal !== "All Sites") {
+    const locVal = location || yard || dealership || site || req.query.dealer;
+    if (locVal && locVal !== "All" && locVal !== "all" && locVal !== "All Locations" && locVal !== "All Yards" && locVal !== "All Sites") {
       filter.$or = [
         { dealership: { $regex: locVal, $options: "i" } },
         { location: { $regex: locVal, $options: "i" } },
