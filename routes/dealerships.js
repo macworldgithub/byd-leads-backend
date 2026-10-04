@@ -5,7 +5,12 @@ const Dealership = require("../models/Dealership");
 // GET all dealerships
 router.get("/", async (req, res) => {
   try {
-    const dealerships = await Dealership.find().sort({ name: 1 });
+    const filter = {};
+    if (req.user?.locked_site) {
+      const clean = req.user.locked_site.replace(/^BYD\s+/i, "").trim();
+      filter.name = { $regex: clean, $options: "i" };
+    }
+    const dealerships = await Dealership.find(filter).sort({ name: 1 });
     res.json(dealerships);
   } catch (err) {
     res.status(500).json({ error: err.message });

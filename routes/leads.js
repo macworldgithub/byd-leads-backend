@@ -20,7 +20,8 @@ router.get("/", async (req, res) => {
     if (stage) filter.stage = stage;
     const dealerVal = dealer || req.query.yard || req.query.location;
     if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
-      filter.dealer = { $regex: escapeRegex(dealerVal), $options: "i" };
+      const cleanDealer = dealerVal.replace(/^BYD\s+/i, "").trim();
+      filter.dealer = { $regex: escapeRegex(cleanDealer), $options: "i" };
     }
     if (tag) filter.tag = tag;
     if (status) filter.status = status;
@@ -81,6 +82,9 @@ router.get("/", async (req, res) => {
 // GET distinct dealerships (for filter dropdown)
 router.get("/dealerships", async (req, res) => {
   try {
+    if (req.user?.locked_site) {
+      return res.json([req.user.locked_site]);
+    }
     const dealers = await Lead.distinct("dealer");
     const validDealers = dealers
       .filter((d) => d && typeof d === "string" && d.trim().length > 0)
@@ -111,7 +115,8 @@ router.get("/stats", async (req, res) => {
     if (stage) filter.stage = stage;
     const dealerVal = dealer || req.query.yard || req.query.location;
     if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
-      filter.dealer = { $regex: escapeRegex(dealerVal), $options: "i" };
+      const cleanDealer = dealerVal.replace(/^BYD\s+/i, "").trim();
+      filter.dealer = { $regex: escapeRegex(cleanDealer), $options: "i" };
     }
     if (tag) filter.tag = tag;
     if (status) filter.status = status;

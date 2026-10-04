@@ -33,11 +33,14 @@ router.get("/", async (req, res) => {
     const convFilter = {};
 
     if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
-      const safe = escapeRegex(dealerVal);
+      const cleanSite = dealerVal.replace(/^BYD\s+/i, "").trim();
+      const safe = escapeRegex(cleanSite);
       leadFilter.dealer = { $regex: safe, $options: "i" };
       apptFilter.$or = [
         { location: { $regex: safe, $options: "i" } },
         { dealership: { $regex: safe, $options: "i" } },
+        { site: { $regex: safe, $options: "i" } },
+        { yard: { $regex: safe, $options: "i" } },
       ];
       invFilter.location = { $regex: safe, $options: "i" };
       convFilter.dealer = { $regex: safe, $options: "i" };
