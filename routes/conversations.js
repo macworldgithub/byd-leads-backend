@@ -150,6 +150,146 @@ router.get("/", async (req, res) => {
   }
 });
 
+// POST create a new conversation (§8.2, ACMA Two-Way SMS)
+router.post("/", async (req, res) => {
+  try {
+    const {
+      prospectName,
+      phone,
+      dealer,
+      vehicle,
+      initialMessage,
+      control = "AI active",
+      sendSms = true,
+    } = req.body;
+
+    if (!prospectName || !phone) {
+      return res.status(400).json({ error: "Prospect name and mobile phone number are required" });
+    }
+
+    const normPhone = mobileMessage.normalizeAustralianPhone(phone);
+    if (!normPhone) {
+      return res.status(400).json({ error: "A valid mobile phone number is required" });
+    }
+
+    const dealership = dealer || "BYD Fairfield VIC";
+    const car = vehicle || "2025 BYD ATTO 3";
+    const firstName = prospectName.trim().split(" ")[0];
+
+    // Find or create associated Lead
+    let lead = await Lead.findOne({ phone: normPhone });
+    if (!lead) {
+      lead = await Lead.create({
+        name: prospectName.trim(),
+        phone: normPhone,
+        dealer: dealership,
+        vehicle: car,
+        stage: control === "AI active" ? "AI QUALIFYING" : "NEW ENQUIRIES",
+        status: control === "AI active" ? "qualification" : "new",
+        notes: "Conversation initiated directly from Lead Centre",
+        source: "Direct SMS",
+      });
+    }
+
+    // Prepare initial message
+    let openingText =
+      initialMessage && initialMessage.trim()
+        ? initialMessage.trim()
+        : `Hi ${firstName}, thanks for your enquiry on the ${car} with ${dealership}. I'm the virtual assistant for our sales team — happy to answer questions or set up a test drive. When are you looking to get into a new car? Reply STOP to opt out`;
+
+    if (!openingText.toLowerCase().includes("reply stop")) {
+      openingText += " Reply STOP to opt out";
+    }
+
+    let initialSmsResult = null;
+    let smsError = null;
+
+    if (sendSms) {
+      try {
+        initialSmsResult = await mobileMessage.sendSms({
+          to: normPhone,
+          message: openingText,
+          customRef: `new-convo-${lead._id}`,
+        });
+      } catch (smsErr) {
+        console.error("Failed to send initial SMS via MobileMessage:", smsErr.message);
+        smsError = smsErr.message;
+      }
+    }
+
+    const now = new Date();
+    const isAi = control === "AI active";
+    const initialSender = isAi ? "ai" : "agent";
+    const senderLabel = isAi ? "AI Assistant" : "Agent";
+
+    const initialMsg = {
+      id: initialSmsResult?.messageId || `msg-${Date.now()}`,
+      sender: initialSender,
+      text: openingText,
+      time: `${senderLabel} · ${formatTime(now)} · sent`,
+      status: smsError ? "failed" : initialSmsResult?.simulated ? "simulated" : "sent",
+      createdAt: now,
+    };
+
+    // Check if conversation already exists for this lead or phone
+    let convo = await Conversation.findOne({
+      $or: [{ leadId: lead._id }, { phone: normPhone }],
+    });
+
+    if (convo) {
+      convo.prospectName = prospectName.trim();
+      convo.dealer = dealership;
+      convo.control = control;
+      convo.messages.push(initialMsg);
+      convo.lastMessage = openingText;
+      convo.lastMessageAt = now;
+      convo.msgCount = convo.messages.length;
+      await convo.save();
+    } else {
+      convo = await Conversation.create({
+        leadId: lead._id,
+        prospectName: prospectName.trim(),
+        phone: normPhone,
+        initials: prospectName
+          .trim()
+          .split(" ")
+          .map((n) => n[0])
+          .join("")
+          .slice(0, 2)
+          .toUpperCase(),
+        dealer: dealership,
+        status: "Contact",
+        control,
+        suggestedResponses: DEFAULT_SUGGESTIONS,
+        qualification: {
+          intent: "—",
+          budget: "—",
+          timeline: "—",
+          tradeIn: "—",
+          finance: "—",
+        },
+        messages: [initialMsg],
+        lastMessage: openingText,
+        lastMessageAt: now,
+        msgCount: 1,
+        daysAgo: 0,
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      conversation: convo,
+      lead,
+      smsResult: initialSmsResult,
+      smsError,
+    });
+  } catch (err) {
+    console.error("Error creating conversation:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // GET or initialize conversation by Lead/Prospect ID
 router.get("/by-lead/:id", async (req, res) => {
   try {
@@ -371,6 +511,7 @@ router.post("/:id/agent-reply", async (req, res) => {
       status: smsError ? "failed" : smsResult?.simulated ? "simulated" : "sent",
     };
 
+    convo.control = "Human";
     convo.messages.push(agentMessage);
     convo.lastMessage = fullText;
     convo.lastMessageAt = now;
