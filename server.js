@@ -40,6 +40,7 @@ app.use("/api/conversations", conversationsRouter);
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/audit-trails", auditTrailsRouter);
+app.use("/api/webhooks", conversationsRouter);
 
 // ── 404 handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {

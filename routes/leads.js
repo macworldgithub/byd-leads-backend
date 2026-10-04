@@ -3,6 +3,7 @@ const router = express.Router();
 const Lead = require("../models/Lead");
 const Conversation = require("../models/Conversation");
 const AuditTrail = require("../models/AuditTrail");
+const mobileMessage = require("../services/mobileMessage");
 
 // Helper to escape regex special characters
 function escapeRegex(str) {
@@ -366,13 +367,25 @@ const handleCsvImport = async (req, res) => {
       existingPhoneSet.add(digitsOnly);
       if (stockKey) existingStockSet.add(stockKey);
 
-      // If sendSms is enabled, initialize Conversation with AI opening SMS
+      // If sendSms is enabled, initialize Conversation with AI opening SMS and dispatch via MobileMessage
       if (sendSms) {
         try {
           const leadFirstName = name.split(" ")[0] || "Customer";
           const carName = vehicle || "2025 BYD ATTO 3";
           const dealerName = dealer || "BYD Fairfield VIC";
           const now = new Date();
+          const openingText = `Hi ${leadFirstName}, thanks for your enquiry on the ${carName} with ${dealerName}. I'm the virtual assistant for our sales team — happy to answer questions or set up a test drive. When are you looking to get into a new car? Reply STOP to opt out`;
+
+          let smsResult = null;
+          try {
+            smsResult = await mobileMessage.sendSms({
+              to: formattedPhone,
+              message: openingText,
+              customRef: `import-${newLead._id}`,
+            });
+          } catch (smsErr) {
+            console.error("Failed to send CSV import SMS via MobileMessage:", smsErr.message);
+          }
 
           await Conversation.create({
             leadId: newLead._id,
@@ -401,11 +414,11 @@ const handleCsvImport = async (req, res) => {
             },
             messages: [
               {
-                id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+                id: smsResult?.messageId || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
                 sender: "ai",
-                text: `Hi ${leadFirstName}, thanks for your enquiry on the ${carName} with ${dealerName}. I'm the virtual assistant for our sales team — happy to answer questions or set up a test drive. When are you looking to get into a new car? Reply STOP to opt out`,
+                text: openingText,
                 time: `AI Assistant · just now · sent`,
-                status: "sent",
+                status: smsResult?.simulated ? "simulated" : "sent",
               },
             ],
             lastMessage: `Hi ${leadFirstName}, thanks for your enquiry...`,
