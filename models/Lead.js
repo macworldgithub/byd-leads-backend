@@ -38,7 +38,7 @@ const leadSchema = new mongoose.Schema(
     // ── Platform field ─────────────────────────────────────────────────────
     platform: {
       type: String,
-      enum: ["manual", "autogate", "sms", "virtualyard"],
+      enum: ["manual", "autogate", "sms", "virtualyard", "dealer_studio"],
       default: "manual",
     },
 
