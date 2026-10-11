@@ -17,6 +17,7 @@ const settingsRouter = require("./routes/settings");
 const auditTrailsRouter = require("./routes/auditTrails");
 
 const authRouter = require("./routes/auth");
+const staffRouter = require("./routes/staff");
 const { optionalAuth, enforceSiteLock } = require("./middleware/auth");
 
 const app = express();
@@ -46,6 +47,7 @@ app.use("/api/inventory", inventoryRouter);
 app.use("/api/conversations", conversationsRouter);
 app.use("/api/appointments", appointmentsRouter);
 app.use("/api/settings", settingsRouter);
+app.use("/api/staff", staffRouter);
 app.use("/api/audit-trails", auditTrailsRouter);
 app.use("/api/webhooks", conversationsRouter);
 
