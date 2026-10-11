@@ -34,6 +34,8 @@ function findBothJson(customPath) {
     return path.resolve(customPath);
   }
   const possiblePaths = [
+    path.join(__dirname, "../../virtual-yard/Leads/both.json"),
+    "d:/sales-floor/virtual-yard/Leads/both.json",
     path.join(__dirname, "../both.json"),
     path.join(__dirname, "../../both.json"),
     path.join(__dirname, "both.json"),
@@ -180,12 +182,34 @@ async function runSeed(filePath) {
   console.log("1️⃣  Processing Leads Collection...");
   console.log("--------------------------------------------------------------------------------");
 
+  console.log("   Loading existing Virtual Yard leads from database for indexing...");
+  const existingDocs = await Lead.find(
+    { platform: "virtualyard" },
+    { _id: 1, leadId: 1, virtualyardId: 1, phone: 1, email: 1, dealer: 1, vehicle: 1, stockNum: 1, testDrive: 1 }
+  ).lean();
+
+  const existingLeadsMap = new Map();
+  for (const doc of existingDocs) {
+    const key = String(doc.leadId || doc.virtualyardId);
+    if (!existingLeadsMap.has(key) || doc.leadId) {
+      existingLeadsMap.set(key, doc);
+    }
+    if (doc.virtualyardId) {
+      const vyKey = String(doc.virtualyardId);
+      if (!existingLeadsMap.has(vyKey) || doc.leadId) {
+        existingLeadsMap.set(vyKey, doc);
+      }
+    }
+  }
+  console.log(`   Indexed ${existingDocs.length} candidate leads (${existingLeadsMap.size} unique keys) in memory.\n`);
+
   const leadOps = [];
   const processedLeadIds = new Set();
 
   for (const item of leads) {
     const leadId = String(item.leadId || item._id);
     processedLeadIds.add(leadId);
+    const existing = existingLeadsMap.get(leadId);
     const linkedTd = testDrivesMap.get(leadId);
     const hasTestDrive = Boolean(linkedTd);
 
@@ -194,6 +218,7 @@ async function runSeed(filePath) {
       cust.fullName ||
       [cust.firstName, cust.lastName].filter(Boolean).join(" ").trim() ||
       linkedTd?.customer?.fullName ||
+      existing?.name ||
       "Prospect";
 
     const phone = cust.phone || cust.mobilePhone || cust.homePhone || linkedTd?.customer?.phone || "";
@@ -203,9 +228,9 @@ async function runSeed(filePath) {
     const vehicleStr =
       veh.raw ||
       [veh.year, veh.colour, veh.make || "BYD", veh.model].filter(Boolean).join(" ").trim() ||
-      "BYD Vehicle";
+      "";
 
-    const dealerStr = veh.yard || linkedTd?.location || "BYD Dealership";
+    const dealerStr = veh.yard || linkedTd?.location || "";
     const stockNum = veh.stockNo || "";
     const priceStr = veh.price ? `$${Number(veh.price).toLocaleString()}` : (veh.priceRaw || "");
 
@@ -216,31 +241,37 @@ async function runSeed(filePath) {
     const status = mapStatus(item, hasTestDrive);
     const daysAgo = calculateDaysAgo(item.leadDate || item.scrapedAt);
 
+    // Non-destructive: preserve existing contact & detail fields if JSON has blanks
+    const finalPhone = phone || existing?.phone || "";
+    const finalEmail = email || existing?.email || "";
+    const finalDealer = (dealerStr && dealerStr !== "BYD Dealership") ? dealerStr : (existing?.dealer || "BYD Dealership");
+    const finalVehicle = (vehicleStr && vehicleStr !== "BYD Vehicle") ? vehicleStr : (existing?.vehicle || "BYD Vehicle");
+
     const doc = {
       name: fullName,
-      vehicle: vehicleStr,
-      dealer: dealerStr,
+      vehicle: finalVehicle,
+      dealer: finalDealer,
       score,
       tag,
       color,
       stage,
       status,
       source: item.source || "Virtual Yard",
-      phone,
-      email,
-      stockNum,
-      control: item.assignedTo && item.assignedTo !== "Not Assigned" ? `Assigned: ${item.assignedTo}` : "AI active",
+      phone: finalPhone,
+      email: finalEmail,
+      stockNum: stockNum || existing?.stockNum || "",
+      control: item.assignedTo && item.assignedTo !== "Not Assigned" ? `Assigned: ${item.assignedTo}` : (existing?.control || "AI active"),
       receivedDaysAgo: daysAgo,
-      notes: item.previewText || "",
+      notes: item.previewText || existing?.notes || "",
       enquiryDesc: item.previewText || `Virtual Yard enquiry - ${item.status || "NEW"}`,
-      enquiryNote: item.status ? `Status: ${item.status} | Stage: ${item.stageText || item.stage}` : "",
-      price: priceStr,
-      paintColor: veh.colour || "",
+      enquiryNote: item.status ? `Status: ${item.status} | Stage: ${item.stageText || item.stage}` : (existing?.enquiryNote || ""),
+      price: priceStr || existing?.price || "",
+      paintColor: veh.colour || existing?.paintColor || "",
       platform: "virtualyard",
 
       leadId: leadId,
       virtualyardId: leadId,
-      customerId: item.customerId ? String(item.customerId) : null,
+      customerId: item.customerId ? String(item.customerId) : (existing?.customerId || null),
       vyStage: item.stage || "",
       vyStageText: item.stageText || "",
       vyTab: item.tab || "",
@@ -248,10 +279,10 @@ async function runSeed(filePath) {
       stageText: item.stageText || item.stage || "NEW",
       tab: item.tab || "inbox",
       previewText: item.previewText || "",
-      assignedTo: item.assignedTo || "",
-      lastContact: item.lastContact || "",
-      leadDate: item.leadDate ? new Date(item.leadDate) : (item.scrapedAt ? new Date(item.scrapedAt) : new Date()),
-      leadCreatedDate: item.leadDate ? new Date(item.leadDate) : (item.scrapedAt ? new Date(item.scrapedAt) : new Date()),
+      assignedTo: item.assignedTo || existing?.assignedTo || "",
+      lastContact: item.lastContact || existing?.lastContact || "",
+      leadDate: item.leadDate ? new Date(item.leadDate) : (existing?.leadDate || (item.scrapedAt ? new Date(item.scrapedAt) : new Date())),
+      leadCreatedDate: item.leadDate ? new Date(item.leadDate) : (existing?.leadCreatedDate || (item.scrapedAt ? new Date(item.scrapedAt) : new Date())),
       testDrive: linkedTd
         ? {
             testDriveDate: linkedTd.testDriveDate ? new Date(linkedTd.testDriveDate) : null,
@@ -259,21 +290,31 @@ async function runSeed(filePath) {
             status: linkedTd.status || "Confirmed",
             confirmed: true,
           }
-        : {
-            testDriveDate: null,
-            location: "",
-            status: "",
-            confirmed: false,
-          },
+        : (existing?.testDrive?.confirmed
+            ? existing.testDrive
+            : {
+                testDriveDate: null,
+                location: "",
+                status: "",
+                confirmed: false,
+              }),
     };
 
-    leadOps.push({
-      updateOne: {
-        filter: { leadId: leadId },
-        update: { $set: doc },
-        upsert: true,
-      },
-    });
+    if (existing) {
+      leadOps.push({
+        updateOne: {
+          filter: { _id: existing._id },
+          update: { $set: doc },
+        },
+      });
+    } else {
+      leadOps.push({
+        insertOne: {
+          document: doc,
+        },
+      });
+      existingLeadsMap.set(leadId, doc);
+    }
   }
 
   // Also include unmatched test drives as separate leads so no prospect is dropped
@@ -285,20 +326,21 @@ async function runSeed(filePath) {
       const cust = td.customer || {};
       const fullName = cust.fullName || [cust.firstName, cust.lastName].filter(Boolean).join(" ").trim() || "Test Drive Prospect";
       const customId = `td-${td._id || td.leadId}`;
+      const existing = existingLeadsMap.get(customId);
 
       const doc = {
         name: fullName,
-        vehicle: "BYD Vehicle",
-        dealer: td.location || "BYD Dealership",
+        vehicle: existing?.vehicle && existing.vehicle !== "BYD Vehicle" ? existing.vehicle : "BYD Vehicle",
+        dealer: td.location || existing?.dealer || "BYD Dealership",
         score: 90,
         tag: "Commitment",
         color: "green",
         stage: "TEST DRIVE BOOKED",
         status: "committed",
         source: "Virtual Yard Test Drive",
-        phone: cust.phone || "",
-        email: cust.email || "",
-        stockNum: "",
+        phone: cust.phone || existing?.phone || "",
+        email: cust.email || existing?.email || "",
+        stockNum: existing?.stockNum || "",
         control: "AI active",
         notes: `Test Drive Booking (${td.status || "Confirmed"})`,
         enquiryDesc: `Test drive scheduled for ${td.testDriveDate ? new Date(td.testDriveDate).toLocaleDateString() : "upcoming date"}`,
@@ -329,24 +371,32 @@ async function runSeed(filePath) {
         },
       };
 
-      leadOps.push({
-        updateOne: {
-          filter: { leadId: customId },
-          update: { $set: doc },
-          upsert: true,
-        },
-      });
+      if (existing) {
+        leadOps.push({
+          updateOne: {
+            filter: { _id: existing._id },
+            update: { $set: doc },
+          },
+        });
+      } else {
+        leadOps.push({
+          insertOne: {
+            document: doc,
+          },
+        });
+        existingLeadsMap.set(customId, doc);
+      }
     }
   }
 
-  let leadUpserted = 0;
+  let leadInserted = 0;
   let leadModified = 0;
   let leadMatched = 0;
 
   for (let i = 0; i < leadOps.length; i += BATCH_SIZE) {
     const chunk = leadOps.slice(i, i + BATCH_SIZE);
     const res = await Lead.bulkWrite(chunk, { ordered: false });
-    leadUpserted += res.upsertedCount || 0;
+    leadInserted += (res.insertedCount || 0) + (res.upsertedCount || 0);
     leadModified += res.modifiedCount || 0;
     leadMatched += res.matchedCount || 0;
     process.stdout.write(`   ↳ Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(leadOps.length / BATCH_SIZE)} processed (${Math.min(i + BATCH_SIZE, leadOps.length)}/${leadOps.length})\r`);
@@ -354,7 +404,7 @@ async function runSeed(filePath) {
   const leadUnchanged = Math.max(0, leadMatched - leadModified);
   console.log(`\n   ✅ Leads Upsert Finished.`);
   console.log(`      - Total Processed:   ${leadOps.length}`);
-  console.log(`      - Newly Inserted:    ${leadUpserted}`);
+  console.log(`      - Newly Inserted:    ${leadInserted}`);
   console.log(`      - Updated/Modified:  ${leadModified}`);
   console.log(`      - Unchanged/Ignored: ${leadUnchanged} (already identical)\n`);
 
@@ -365,14 +415,23 @@ async function runSeed(filePath) {
   console.log("2️⃣  Processing Appointments Collection (Test Drives)...");
   console.log("--------------------------------------------------------------------------------");
 
+  const existingAppts = await Appointment.find({}, { _id: 1, appointmentId: 1, phone: 1, email: 1 }).lean();
+  const existingApptsMap = new Map();
+  for (const a of existingAppts) {
+    if (a.appointmentId) existingApptsMap.set(String(a.appointmentId), a);
+    existingApptsMap.set(String(a._id), a);
+  }
+
   const appointmentOps = [];
   for (const td of testDrives) {
     const appointmentId = String(td._id);
+    const existingAppt = existingApptsMap.get(appointmentId);
     const leadId = td.leadId ? String(td.leadId) : "";
     const cust = td.customer || {};
     const prospectName =
       cust.fullName ||
       [cust.firstName, cust.lastName].filter(Boolean).join(" ").trim() ||
+      existingAppt?.prospectName ||
       "Test Drive Prospect";
 
     const linkedLead = leads.find((l) => String(l.leadId || l._id) === leadId);
@@ -380,6 +439,7 @@ async function runSeed(filePath) {
     const vehicleStr =
       veh.raw ||
       [veh.year, veh.colour, veh.make || "BYD", veh.model].filter(Boolean).join(" ").trim() ||
+      existingAppt?.vehicle ||
       "BYD Vehicle";
 
     const apptDoc = {
@@ -387,12 +447,12 @@ async function runSeed(filePath) {
       leadId,
       when: formatAppointmentWhen(td.testDriveDate),
       prospectName,
-      phone: cust.phone || "",
-      email: cust.email || "",
+      phone: cust.phone || existingAppt?.phone || "",
+      email: cust.email || existingAppt?.email || "",
       type: "Test Drive",
       vehicle: vehicleStr,
-      dealership: td.location || "BYD Dealership",
-      location: td.location || "BYD Dealership",
+      dealership: td.location || existingAppt?.dealership || "BYD Dealership",
+      location: td.location || existingAppt?.location || "BYD Dealership",
       bookedBy: "AI",
       status: td.status || "Confirmed",
       testDriveDate: td.testDriveDate ? new Date(td.testDriveDate) : null,
@@ -567,7 +627,7 @@ async function runSeed(filePath) {
   console.log("================================================================================");
   console.log("📊  DATABASE SYNC SUMMARY REPORT");
   console.log("================================================================================");
-  console.log(`📌 Leads:        ${leadOps.length} processed | ${leadUpserted} new | ${leadModified} updated | ${leadUnchanged} unchanged | Total in DB: ${totalLeadsInDb}`);
+  console.log(`📌 Leads:        ${leadOps.length} processed | ${leadInserted} new | ${leadModified} updated | ${leadUnchanged} unchanged | Total in DB: ${totalLeadsInDb}`);
   console.log(`📌 Appointments: ${appointmentOps.length} processed | ${apptUpserted} new | ${apptModified} updated | ${apptUnchanged} unchanged | Total in DB: ${totalApptsInDb}`);
   console.log(`📌 Inventory:    ${inventoryOps.length} processed | ${invUpserted} new | ${invModified} updated | ${invUnchanged} unchanged | Total in DB: ${totalInvInDb}`);
   console.log("================================================================================");
