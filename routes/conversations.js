@@ -6,7 +6,7 @@ const mobileMessage = require("../services/mobileMessage");
 const { authenticate } = require("../middleware/auth");
 const { getThreads, allowedSite, phoneKey, siteKey } = require("../services/threadHistory");
 const { deliveryDb } = require("../services/messageDb");
-const { phoneRegex, inboundId, receivedAt } = require("../services/smsEvent");
+const { phoneRegex, inboundId, receivedAt, inboundSite } = require("../services/smsEvent");
 const mongoose = require("mongoose");
 const history = (req, scope = true, phone = req.smsConversation?.phone || req.query.phone) => deliveryDb().then(db => getThreads(mongoose.connection.db, db, req.user, scope ? req.query.dealer || req.query.site : undefined, { phone }));
 router.use((req, res, next) => {
@@ -487,6 +487,8 @@ router.post("/:id/agent-reply", async (req, res) => {
       ? text.trim()
       : `${text.trim()} Reply STOP to opt out`;
 
+    if (!convo.phone) return res.status(400).json({ success: false, error: "Recipient phone is required" });
+
     // Live dispatch via MobileMessage gateway
     let smsResult = null;
     let smsError = null;
@@ -598,17 +600,18 @@ router.post("/inbound", async (req, res) => {
     const phoneSearchKey = phoneRegex(normPhone);
     const messageId = inboundId(req.body, normPhone, text);
 
-    // Match formatted/local phone numbers exactly after normalization.
-    let [matchedLead, convo] = await Promise.all([
-      Lead.findOne({ phone: phoneSearchKey }),
-      Conversation.findOne({ phone: phoneSearchKey }),
+    // An uncorrelated reply can only inherit a site when the phone has one owner.
+    const db = await deliveryDb();
+    const [leads, clients] = await Promise.all([
+      Lead.find({ phone: phoneSearchKey }),
+      db.collection('clients').find({ phone: phoneSearchKey }).toArray(),
     ]);
-
     const originalId = req.body.original_message_id;
-    const original = originalId ? await (await deliveryDb()).collection('messages').findOne({ provider_message_id: originalId, direction: 'outbound' }) : null;
-    const source = originalId ? await Conversation.findOne({ 'messages.id': originalId }) : null;
-    const client = await (await deliveryDb()).collection('clients').findOne({ phone: phoneSearchKey });
-    const site = original?.site || source?.dealer || matchedLead?.dealer || client?.site_location || client?.site || '';
+    const original = originalId ? await db.collection('messages').findOne({ provider_message_id: originalId, direction: 'outbound' }) : null;
+    const source = originalId ? await Conversation.findOne({ messages: { $elemMatch: { id: originalId, sender: { $ne: 'user' } } } }) : null;
+    const site = inboundSite(original, source, leads, clients);
+    const matchedLead = leads.find(lead => siteKey(lead.dealer) === siteKey(site));
+    let convo;
     const candidates = await Conversation.find({ phone: phoneSearchKey }).sort({ lastMessageAt: -1 });
     convo = source || candidates.find(c => siteKey(c.dealer) === siteKey(site)) || null;
     if (messageId && convo?.messages.some(m => m.id === String(messageId))) return res.json({ success: true, duplicate: true, conversationId: convo._id });

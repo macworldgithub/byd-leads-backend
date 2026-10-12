@@ -1,5 +1,5 @@
 /**
- * mobileMessage.js – MobileMessage.com.au Two-Way SMS Gateway Client
+ * mobileMessage.js Ã¢â‚¬â€œ MobileMessage.com.au Two-Way SMS Gateway Client
  * Handles HTTP Basic Auth, Australian E.164 phone normalization,
  * message dispatch, concurrency retry, and live connectivity diagnostics.
  */
@@ -16,7 +16,7 @@ const DEFAULT_BASE_URL = "https://api.mobilemessage.com.au";
  */
 function normalizeAustralianPhone(phone) {
   if (!phone) return "";
-  let cleaned = String(phone).replace(/[\s\-\(\)]/g, "");
+  let cleaned = String(phone).replace(/[^\d+]/g, "");
 
   // 04XX XXX XXX -> +614XXXXXXXX
   if (/^04\d{8}$/.test(cleaned)) {
@@ -53,9 +53,9 @@ function normalizeAustralianPhone(phone) {
 async function getConfig() {
   const envUsername = process.env.MOBILEMESSAGE_USERNAME || "";
   const envPassword = process.env.MOBILEMESSAGE_PASSWORD || process.env.MOBILEMESSAGE_API_KEY || "";
-  const envSender = process.env.MOBILEMESSAGE_SENDER_ID || "+61468104118";
+  const envSender = process.env.MOBILEMESSAGE_SENDER_ID || process.env.MOBILEMESSAGE_FROM || "+61468104118";
   const envSimulation = process.env.MOBILEMESSAGE_SIMULATION_MODE === "true";
-  const apiUrl = process.env.MOBILEMESSAGE_API_URL || DEFAULT_BASE_URL;
+  const apiUrl = (process.env.MOBILEMESSAGE_API_URL || DEFAULT_BASE_URL).replace(/\/v1\/messages\/?$/, "").replace(/\/+$/, "");
 
   try {
     const mongoose = require("mongoose");
@@ -66,7 +66,7 @@ async function getConfig() {
           username: setting.username.trim(),
           password: setting.apiKey.trim(),
           senderId: setting.senderId || envSender,
-          simulationMode: Boolean(setting.simulationMode),
+          simulationMode: process.env.MOBILEMESSAGE_SIMULATION_MODE === undefined ? setting.simulationMode === true : envSimulation,
           apiUrl,
         };
       }
@@ -111,8 +111,9 @@ async function sendSms({ to, message, sender, customRef, idempotencyKey }) {
       ? crypto.randomUUID()
       : `byd-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`);
 
-  // If simulation mode is explicitly enabled or credentials are missing
-  if (config.simulationMode || !config.username || !config.password) {
+  // Simulation must be explicitly enabled; missing credentials are a send failure.
+  if (!config.simulationMode && (!config.username || !config.password)) throw new Error("SMS provider not configured");
+  if (config.simulationMode) {
     const simulatedId = `sim-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     return {
       success: true,
@@ -131,6 +132,7 @@ async function sendSms({ to, message, sender, customRef, idempotencyKey }) {
     "Basic " + Buffer.from(`${config.username}:${config.password}`).toString("base64");
 
   const payload = {
+    enable_unicode: true,
     messages: [
       {
         to: normalizedPhone,
@@ -188,7 +190,7 @@ async function sendSms({ to, message, sender, customRef, idempotencyKey }) {
   }
 
   const resultStatus = String(firstResult.status || "").toLowerCase();
-  if (resultStatus === "error" || resultStatus === "blocked" || resultStatus === "failed") {
+  if (!["success", "queued", "sent", "accepted"].includes(resultStatus) || !firstResult.message_id) {
     throw new Error(
       firstResult.error || firstResult.message || `Message delivery failed with status: ${firstResult.status}`
     );
@@ -200,7 +202,7 @@ async function sendSms({ to, message, sender, customRef, idempotencyKey }) {
     messageId: firstResult.message_id,
     sendId: responseData.send_id,
     cost: firstResult.cost,
-    status: firstResult.status || "queued",
+    status: resultStatus,
     to: firstResult.to,
     sender: firstResult.sender || effectiveSender,
     sentAt: new Date(),
@@ -279,7 +281,8 @@ async function testConnection(overrideCredentials) {
  */
 async function lookupMessage(messageId) {
   const config = await getConfig();
-  if (config.simulationMode || !config.username || !config.password) {
+  if (!config.simulationMode && (!config.username || !config.password)) throw new Error("SMS provider not configured");
+  if (config.simulationMode) {
     return {
       message_id: messageId,
       status: "delivered",
