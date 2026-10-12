@@ -3,6 +3,28 @@ const router = express.Router();
 const Conversation = require("../models/Conversation");
 const Lead = require("../models/Lead");
 const mobileMessage = require("../services/mobileMessage");
+const { authenticate } = require("../middleware/auth");
+const { getThreads, allowedSite, phoneKey, siteKey } = require("../services/threadHistory");
+const { deliveryDb } = require("../services/messageDb");
+const { phoneRegex, inboundId, receivedAt } = require("../services/smsEvent");
+const mongoose = require("mongoose");
+const history = (req, scope = true, phone = req.smsConversation?.phone || req.query.phone) => deliveryDb().then(db => getThreads(mongoose.connection.db, db, req.user, scope ? req.query.dealer || req.query.site : undefined, { phone }));
+router.use((req, res, next) => {
+  if (req.method === "POST" && ["/inbound", "/status"].includes(req.path)) return next();
+  return authenticate(req, res, next);
+});
+router.use(async (req, res, next) => {
+  try {
+    const id = req.path.split("/")[1];
+    if (/^[a-f0-9]{24}$/i.test(id)) {
+      const doc = await Conversation.findById(id);
+      if (!doc || !allowedSite(req.user, doc.dealer)) return res.status(404).json({ error: "Conversation not found" });
+      req.smsConversation = doc;
+    }
+    if (req.method === "POST" && req.path === "/" && !allowedSite(req.user, req.body.dealer)) return res.status(403).json({ error: "Site access denied" });
+    next();
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 function formatTime(date = new Date()) {
   const day = date.getDate();
@@ -38,7 +60,7 @@ async function findOrCreateConversation(query) {
     convo = await Conversation.findOne({ manualProspectId });
   }
   if (!convo && phone) {
-    convo = await Conversation.findOne({ phone });
+    convo = await Conversation.findOne({ phone, dealer });
   }
 
   if (!convo) {
@@ -49,6 +71,7 @@ async function findOrCreateConversation(query) {
     const openingText = `Hi ${firstName}, thanks for your enquiry on the ${car} with ${dealership}. I'm the virtual assistant for our sales team — happy to answer questions or set up a test drive. When are you looking to get into a new car? Reply STOP to opt out`;
 
     let initialSmsResult = null;
+    let initialSmsError = null;
     if (sendInitialSms && phone) {
       try {
         initialSmsResult = await mobileMessage.sendSms({
@@ -56,6 +79,7 @@ async function findOrCreateConversation(query) {
           message: openingText,
         });
       } catch (smsErr) {
+        initialSmsError = smsErr.message;
         console.error("Failed to send initial SMS via MobileMessage:", smsErr.message);
       }
     }
@@ -82,18 +106,18 @@ async function findOrCreateConversation(query) {
         tradeIn: "—",
         finance: "—",
       },
-      messages: [
+      messages: sendInitialSms ? [
         {
           id: initialSmsResult?.messageId || `msg-${Date.now()}`,
           sender: "ai",
           text: openingText,
           time: `AI Assistant · ${formatTime(now)} · sent`,
-          status: initialSmsResult?.simulated ? "simulated" : "sent",
+          status: initialSmsError ? "failed" : initialSmsResult?.simulated ? "simulated" : "sent",
         },
-      ],
-      lastMessage: `Hi ${firstName}, thanks for your enquiry...`,
+      ] : [],
+      lastMessage: sendInitialSms ? `Hi ${firstName}, thanks for your enquiry...` : "",
       lastMessageAt: now,
-      msgCount: 1,
+      msgCount: sendInitialSms ? 1 : 0,
       daysAgo: 0,
     });
   }
@@ -110,40 +134,11 @@ function escapeRegex(str) {
 // GET all conversations (synchronized with existing leads)
 router.get("/", async (req, res) => {
   try {
-    const { control, q, dealer, yard, location } = req.query;
-    const filter = {};
-    if (control === "ai") filter.control = "AI active";
-    if (control === "human") filter.control = { $regex: "Human", $options: "i" };
-    const dealerVal = dealer || yard || location;
-    if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
-      filter.dealer = { $regex: escapeRegex(dealerVal), $options: "i" };
-    }
-    if (q) {
-      const safeQ = escapeRegex(q);
-      filter.$or = [
-        { prospectName: { $regex: safeQ, $options: "i" } },
-        { phone: { $regex: safeQ, $options: "i" } },
-      ];
-    }
-
-    // Only return conversations that correspond to active leads or manual test leads
-    const allLeads = await Lead.find({}, "_id phone");
-    const activeLeadIds = new Set(allLeads.map((l) => l._id.toString()));
-    const activeLeadPhones = new Set(allLeads.map((l) => l.phone).filter(Boolean));
-
-    const convos = await Conversation.find(filter).sort({ lastMessageAt: -1 });
-
-    // Filter out orphaned conversations where lead has been deleted
-    const syncedConvos = convos.filter((c) => {
-      if (c.leadId) {
-        return activeLeadIds.has(c.leadId.toString());
-      }
-      if (c.phone && activeLeadPhones.size > 0) {
-        return activeLeadPhones.has(c.phone) || c.manualProspectId?.startsWith("MANUAL-");
-      }
-      return true;
-    });
-
+    const { control, q } = req.query;
+    let syncedConvos = await history(req);
+    if (control === "ai") syncedConvos = syncedConvos.filter(c => c.control === "AI active");
+    if (control === "human") syncedConvos = syncedConvos.filter(c => /human|agent/i.test(c.control));
+    if (q) syncedConvos = syncedConvos.filter(c => (c.prospectName + " " + c.phone).toLowerCase().includes(q.toLowerCase()));
     res.json(syncedConvos);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -177,7 +172,7 @@ router.post("/", async (req, res) => {
     const firstName = prospectName.trim().split(" ")[0];
 
     // Find or create associated Lead
-    let lead = await Lead.findOne({ phone: normPhone });
+    let lead = await Lead.findOne({ phone: normPhone, dealer: dealership });
     if (!lead) {
       lead = await Lead.create({
         name: prospectName.trim(),
@@ -233,16 +228,15 @@ router.post("/", async (req, res) => {
 
     // Check if conversation already exists for this lead or phone
     let convo = await Conversation.findOne({
-      $or: [{ leadId: lead._id }, { phone: normPhone }],
+      $or: [{ leadId: lead._id }, { phone: normPhone, dealer: dealership }],
     });
 
     if (convo) {
       convo.prospectName = prospectName.trim();
       convo.dealer = dealership;
       convo.control = control;
-      convo.messages.push(initialMsg);
-      convo.lastMessage = openingText;
-      convo.lastMessageAt = now;
+      if (sendSms) convo.messages.push(initialMsg);
+      if (sendSms) { convo.lastMessage = openingText; convo.lastMessageAt = now; }
       convo.msgCount = convo.messages.length;
       await convo.save();
     } else {
@@ -268,17 +262,18 @@ router.post("/", async (req, res) => {
           tradeIn: "—",
           finance: "—",
         },
-        messages: [initialMsg],
-        lastMessage: openingText,
+        messages: sendSms ? [initialMsg] : [],
+        lastMessage: sendSms ? openingText : "",
         lastMessageAt: now,
-        msgCount: 1,
+        msgCount: sendSms ? 1 : 0,
         daysAgo: 0,
       });
     }
 
-    res.status(201).json({
-      success: true,
-      conversation: convo,
+    res.status(smsError ? 502 : 201).json({
+      success: !smsError,
+      error: smsError || undefined,
+      conversation: (await history(req, false, convo.phone)).find(c => c.threadIds.includes(String(convo._id))) || convo,
       lead,
       smsResult: initialSmsResult,
       smsError,
@@ -300,6 +295,10 @@ router.get("/by-lead/:id", async (req, res) => {
       lead = await Lead.findById(id);
     }
 
+    const dealer = lead ? lead.dealer : req.query.dealer || "";
+    if (!allowedSite(req.user, dealer)) return res.status(404).json({ error: "Lead not found" });
+    const existing = (await history(req, false, lead?.phone || req.query.phone)).find(c => (c.leadId && String(c.leadId) === id) || (phoneKey(c.phone) === phoneKey(lead?.phone || req.query.phone) && (c.sites || [c.dealer]).some(site => siteKey(site) === siteKey(dealer))));
+    if (existing) return res.json(existing);
     const convo = await findOrCreateConversation({
       leadId: isMongo ? id : null,
       manualProspectId: !isMongo ? id : "",
@@ -310,7 +309,8 @@ router.get("/by-lead/:id", async (req, res) => {
       sendInitialSms: req.query.sendSms === "true",
     });
 
-    res.json(convo);
+    const unified = (await history(req, false, convo.phone)).find(c => c.threadIds.includes(String(convo._id)));
+    res.json(unified || convo);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -321,7 +321,8 @@ router.get("/:id", async (req, res) => {
   try {
     const convo = await Conversation.findById(req.params.id);
     if (!convo) return res.status(404).json({ error: "Conversation not found" });
-    res.json(convo);
+    const unified = (await history(req, false, convo.phone)).find(c => c.threadIds.includes(String(convo._id)));
+    res.json(unified || convo);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -443,7 +444,7 @@ router.post("/:id/simulate", async (req, res) => {
         sender: "ai",
         text: aiReply,
         time: `AI Assistant · ${timeFormatted} · sent`,
-        status: smsResult?.simulated ? "simulated" : "sent",
+        status: !smsResult ? "failed" : smsResult.simulated ? "simulated" : "sent",
       };
       convo.messages.push(aiMessage);
       convo.lastMessage = aiReply;
@@ -457,7 +458,7 @@ router.post("/:id/simulate", async (req, res) => {
 
     res.json({
       success: true,
-      conversation: convo,
+      conversation: (await history(req, false, convo.phone)).find(c => c.threadIds.includes(String(convo._id))) || convo,
       userMessage,
       aiMessage,
       smsResult,
@@ -511,16 +512,15 @@ router.post("/:id/agent-reply", async (req, res) => {
       status: smsError ? "failed" : smsResult?.simulated ? "simulated" : "sent",
     };
 
-    convo.control = "Human";
-    convo.messages.push(agentMessage);
-    convo.lastMessage = fullText;
-    convo.lastMessageAt = now;
-    convo.msgCount = convo.messages.length;
-    await convo.save();
+    await Conversation.updateOne({ _id: convo._id }, {
+      $push: { messages: agentMessage }, $inc: { msgCount: 1 },
+      $set: { control: 'Human', lastMessage: fullText, lastMessageAt: now },
+    });
 
-    res.json({
-      success: true,
-      conversation: convo,
+    res.status(smsError ? 502 : 200).json({
+      success: !smsError,
+      error: smsError || undefined,
+      conversation: (await history(req, false, convo.phone)).find(c => c.threadIds.includes(String(convo._id))) || convo,
       agentMessage,
       smsResult,
       smsError,
@@ -568,7 +568,7 @@ router.post("/:id/toggle-control", async (req, res) => {
     res.json({
       success: true,
       control: convo.control,
-      conversation: convo,
+      conversation: (await history(req, false, convo.phone)).find(c => c.threadIds.includes(String(convo._id))) || convo,
       systemMessage: systemMsg,
     });
   } catch (err) {
@@ -587,7 +587,7 @@ router.post("/inbound", async (req, res) => {
       req.body.from_number ||
       req.body.mobile;
     const rawMessage = req.body.message || req.body.body || req.body.text || "";
-    const messageId = req.body.message_id || req.body.MessageId || req.body.id;
+
 
     if (!rawFrom || !rawMessage) {
       return res.status(400).json({ error: "Missing phone or message content" });
@@ -595,15 +595,24 @@ router.post("/inbound", async (req, res) => {
 
     const normPhone = mobileMessage.normalizeAustralianPhone(rawFrom);
     const text = String(rawMessage).trim();
-    const phoneSearchKey = normPhone.slice(-8);
+    const phoneSearchKey = phoneRegex(normPhone);
+    const messageId = inboundId(req.body, normPhone, text);
 
-    // Find lead & conversation by phone
+    // Match formatted/local phone numbers exactly after normalization.
     let [matchedLead, convo] = await Promise.all([
-      Lead.findOne({ phone: { $regex: phoneSearchKey, $options: "i" } }),
-      Conversation.findOne({ phone: { $regex: phoneSearchKey, $options: "i" } }),
+      Lead.findOne({ phone: phoneSearchKey }),
+      Conversation.findOne({ phone: phoneSearchKey }),
     ]);
 
-    const now = new Date();
+    const originalId = req.body.original_message_id;
+    const original = originalId ? await (await deliveryDb()).collection('messages').findOne({ provider_message_id: originalId, direction: 'outbound' }) : null;
+    const source = originalId ? await Conversation.findOne({ 'messages.id': originalId }) : null;
+    const client = await (await deliveryDb()).collection('clients').findOne({ phone: phoneSearchKey });
+    const site = original?.site || source?.dealer || matchedLead?.dealer || client?.site_location || client?.site || '';
+    const candidates = await Conversation.find({ phone: phoneSearchKey }).sort({ lastMessageAt: -1 });
+    convo = source || candidates.find(c => siteKey(c.dealer) === siteKey(site)) || null;
+    if (messageId && convo?.messages.some(m => m.id === String(messageId))) return res.json({ success: true, duplicate: true, conversationId: convo._id });
+    const now = receivedAt(req.body);
     const timeFormatted = formatTime(now);
 
     const userMsg = {
@@ -611,29 +620,27 @@ router.post("/inbound", async (req, res) => {
       sender: "user",
       text,
       time: `Prospect · ${timeFormatted}`,
-      status: "delivered",
+      status: "received",
       createdAt: now,
     };
 
     if (!convo) {
-      convo = await Conversation.create({
-        leadId: matchedLead?._id || undefined,
-        prospectName: matchedLead?.name || `Customer (${normPhone})`,
-        phone: normPhone,
-        dealer: matchedLead?.dealer || "BYD Fairfield VIC",
-        status: "Contact",
-        control: "AI active",
-        messages: [userMsg],
-        lastMessage: text,
-        lastMessageAt: now,
-        msgCount: 1,
-      });
-    } else {
-      convo.messages.push(userMsg);
-      convo.lastMessage = text;
-      convo.lastMessageAt = now;
-      convo.msgCount = (convo.msgCount || 0) + 1;
+      const identity = require('crypto').createHash('sha256').update(siteKey(site) + ':' + phoneKey(normPhone)).digest('hex').slice(0, 24);
+      convo = await Conversation.findOneAndUpdate(
+        { _id: new mongoose.Types.ObjectId(identity) },
+        { $setOnInsert: {
+          leadId: matchedLead?._id || undefined,
+          prospectName: matchedLead?.name || 'Customer (' + normPhone + ')',
+          phone: normPhone, dealer: site, status: 'Contact',
+          control: matchedLead ? 'AI active' : 'Human', messages: [], msgCount: 0,
+        } }, { upsert: true, new: true }
+      );
     }
+    const appended = await Conversation.updateOne(
+      { _id: convo._id, 'messages.id': { $ne: messageId } },
+      { $push: { messages: userMsg }, $inc: { msgCount: 1 }, $set: { lastMessage: text, lastMessageAt: now } }
+    );
+    if (!appended.modifiedCount) return res.json({ success: true, duplicate: true, conversationId: convo._id });
 
     // If AI active, auto-reply via MobileMessage
     let aiMsg = null;
@@ -665,14 +672,13 @@ router.post("/inbound", async (req, res) => {
         sender: "ai",
         text: aiReply,
         time: `AI Assistant · ${formatTime(new Date())} · sent`,
-        status: smsResult?.simulated ? "simulated" : "sent",
+        status: !smsResult ? "failed" : smsResult.simulated ? "simulated" : "sent",
       };
-      convo.messages.push(aiMsg);
-      convo.lastMessage = aiReply;
-      convo.msgCount = convo.messages.length;
+      await Conversation.updateOne(
+        { _id: convo._id }, { $push: { messages: aiMsg }, $inc: { msgCount: 1 },
+          $set: { lastMessage: aiReply, lastMessageAt: new Date() } }
+      );
     }
-
-    await convo.save();
 
     res.json({
       success: true,
@@ -691,11 +697,12 @@ router.post("/status", async (req, res) => {
   try {
     const { message_id, status } = req.body;
     if (message_id && status) {
-      await Conversation.updateOne(
+      await Conversation.updateMany(
         { "messages.id": message_id },
         { $set: { "messages.$.status": status.toLowerCase() } }
       );
     }
+    if (message_id && status) await (await deliveryDb()).collection("messages").updateMany({ provider_message_id: message_id }, { $set: { status: status.toLowerCase() } });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
