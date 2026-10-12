@@ -28,7 +28,7 @@ const conversationSchema = new mongoose.Schema(
     status: { type: String, default: "Contact" },
     control: {
       type: String,
-      default: "AI active",
+      default: "Human",
     },
     suggestedResponses: [
       {

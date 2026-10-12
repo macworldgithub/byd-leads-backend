@@ -94,7 +94,10 @@ async function getConfig() {
  * @param {string} [options.idempotencyKey] - UUID to prevent duplicate dispatch
  * @returns {Promise<Object>} Send result
  */
-async function sendSms({ to, message, sender, customRef, idempotencyKey }) {
+async function sendSms({ to, message, sender, customRef, idempotencyKey, requestedBy }) {
+  if (typeof requestedBy !== 'string' || !requestedBy.trim()) {
+    throw new Error('SMS must be sent manually by an authenticated staff member');
+  }
   const normalizedPhone = normalizeAustralianPhone(to);
   if (!normalizedPhone) {
     throw new Error("Valid recipient phone number is required");

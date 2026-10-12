@@ -3,7 +3,6 @@ const router = express.Router();
 const Lead = require("../models/Lead");
 const Conversation = require("../models/Conversation");
 const AuditTrail = require("../models/AuditTrail");
-const mobileMessage = require("../services/mobileMessage");
 
 // Helper to escape regex special characters
 function escapeRegex(str) {
@@ -17,7 +16,7 @@ router.get("/", async (req, res) => {
     const { stage, dealer, tag, status, platform, q, page, limit, sort, paginated } = req.query;
     const filter = {};
 
-    if (stage) filter.stage = stage;
+    if (stage) filter.stage = stage === "IN FOLLOW-UP" ? { $in: ["IN FOLLOW-UP", "AI QUALIFYING"] } : stage;
     const dealerVal = dealer || req.query.yard || req.query.location;
     if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
       const cleanDealer = dealerVal.replace(/^BYD\s+/i, "").trim();
@@ -112,7 +111,7 @@ router.get("/stats", async (req, res) => {
     const { stage, dealer, tag, status, q } = req.query;
     const filter = {};
 
-    if (stage) filter.stage = stage;
+    if (stage) filter.stage = stage === "IN FOLLOW-UP" ? { $in: ["IN FOLLOW-UP", "AI QUALIFYING"] } : stage;
     const dealerVal = dealer || req.query.yard || req.query.location;
     if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
       const cleanDealer = dealerVal.replace(/^BYD\s+/i, "").trim();
@@ -136,7 +135,7 @@ router.get("/stats", async (req, res) => {
     const [total, humanAssisted, aiQualifying, testDrives] = await Promise.all([
       Lead.countDocuments(filter),
       Lead.countDocuments({ ...filter, control: { $regex: "Human", $options: "i" } }),
-      Lead.countDocuments({ ...filter, stage: "AI QUALIFYING" }),
+      Lead.countDocuments({ ...filter, stage: { $in: ["IN FOLLOW-UP", "AI QUALIFYING"] } }),
       Lead.countDocuments({ ...filter, stage: "TEST DRIVE BOOKED" }),
     ]);
     res.json({ total, humanAssisted, aiQualifying, testDrives });
@@ -159,7 +158,7 @@ router.get("/:id", async (req, res) => {
 // POST create lead
 router.post("/", async (req, res) => {
   try {
-    const lead = await Lead.create(req.body);
+    const lead = await Lead.create({ ...req.body, control: "Human" });
     try {
       await AuditTrail.create({
         message: `Prospect ${lead.name} created manually into ${lead.stage}`,
@@ -178,7 +177,7 @@ router.post("/", async (req, res) => {
 // PUT update lead
 router.put("/:id", async (req, res) => {
   try {
-    const lead = await Lead.findByIdAndUpdate(req.params.id, req.body, {
+    const lead = await Lead.findByIdAndUpdate(req.params.id, { ...req.body, control: "Human" }, {
       new: true,
       runValidators: true,
     });
@@ -229,7 +228,7 @@ router.delete("/:id", async (req, res) => {
 // POST import leads from CSV
 const handleCsvImport = async (req, res) => {
   try {
-    const { leads: rawRows = [], defaultDealer = "BYD Fairfield VIC", sendSms = true } = req.body;
+    const { leads: rawRows = [], defaultDealer = "BYD Fairfield VIC" } = req.body;
 
     if (!Array.isArray(rawRows) || rawRows.length === 0) {
       return res.status(400).json({ error: "No leads data provided for import" });
@@ -367,10 +366,10 @@ const handleCsvImport = async (req, res) => {
         enquiryDesc: notes || `${vehicle} enquiry`,
         enquiryNote: suburb ? `Location: ${suburb} ${state}`.trim() : "",
         stockNum: leadId || `CSV-${Math.floor(1000 + Math.random() * 9000)}`,
-        stage: sendSms ? "AI QUALIFYING" : "NEW ENQUIRIES",
-        status: sendSms ? "qualification" : "new",
+        stage: "NEW ENQUIRIES",
+        status: "new",
         tag: "Contact",
-        control: "AI active",
+        control: "Human",
         score: 10,
         source: "CSV Import",
         price: "$49,990",
@@ -382,70 +381,7 @@ const handleCsvImport = async (req, res) => {
       existingPhoneSet.add(digitsOnly);
       if (stockKey) existingStockSet.add(stockKey);
 
-      // If sendSms is enabled, initialize Conversation with AI opening SMS and dispatch via MobileMessage
-      if (sendSms) {
-        try {
-          const leadFirstName = name.split(" ")[0] || "Customer";
-          const carName = vehicle || "2025 BYD ATTO 3";
-          const dealerName = dealer || "BYD Fairfield VIC";
-          const now = new Date();
-          const openingText = `Hi ${leadFirstName}, thanks for your enquiry on the ${carName} with ${dealerName}. I'm the virtual assistant for our sales team — happy to answer questions or set up a test drive. When are you looking to get into a new car? Reply STOP to opt out`;
-
-          let smsResult = null;
-          try {
-            smsResult = await mobileMessage.sendSms({
-              to: formattedPhone,
-              message: openingText,
-              customRef: `import-${newLead._id}`,
-            });
-          } catch (smsErr) {
-            console.error("Failed to send CSV import SMS via MobileMessage:", smsErr.message);
-          }
-
-          await Conversation.create({
-            leadId: newLead._id,
-            prospectName: name,
-            phone: formattedPhone,
-            initials: name
-              .split(" ")
-              .map((n) => n[0])
-              .join("")
-              .slice(0, 2)
-              .toUpperCase(),
-            dealer: dealerName,
-            status: "Contact",
-            control: "AI active",
-            suggestedResponses: [
-              "I'm looking to buy this month",
-              "My budget is around $60k",
-              "I have a vehicle to trade",
-            ],
-            qualification: {
-              intent: "—",
-              budget: "—",
-              timeline: "—",
-              tradeIn: "—",
-              finance: "—",
-            },
-            messages: [
-              {
-                id: smsResult?.messageId || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-                sender: "ai",
-                text: openingText,
-                time: `AI Assistant · just now · sent`,
-                status: !smsResult ? "failed" : smsResult.simulated ? "simulated" : "sent",
-                createdAt: now,
-              },
-            ],
-            lastMessage: `Hi ${leadFirstName}, thanks for your enquiry...`,
-            lastMessageAt: now,
-            msgCount: 1,
-            daysAgo: 0,
-          });
-        } catch (convErr) {
-          console.error("Conversation creation error during CSV import:", convErr);
-        }
-      }
+      // Imports never send SMS. Staff compose messages from the conversation inbox.
 
       // Add to Audit Trail
       try {

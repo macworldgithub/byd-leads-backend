@@ -121,7 +121,7 @@ function mapStage(lead, hasTestDrive) {
   if (status.includes("BOOKING") || status.includes("TEST DRIVE")) return "TEST DRIVE BOOKED";
   if (status.includes("ORDER") || status.includes("SIGNED") || status.includes("FINALISE") || stage === "complete") return "DELIVERED";
   if (status.includes("LOST") || status.includes("CANCELLED")) return "LOST";
-  if (stage === "in_contact" || stage === "assigned") return "AI QUALIFYING";
+  if (stage === "in_contact" || stage === "assigned") return "IN FOLLOW-UP";
   return "NEW ENQUIRIES";
 }
 
@@ -260,7 +260,7 @@ async function runSeed(filePath) {
       phone: finalPhone,
       email: finalEmail,
       stockNum: stockNum || existing?.stockNum || "",
-      control: item.assignedTo && item.assignedTo !== "Not Assigned" ? `Assigned: ${item.assignedTo}` : (existing?.control || "AI active"),
+      control: item.assignedTo && item.assignedTo !== "Not Assigned" ? `Assigned: ${item.assignedTo}` : ("Human"),
       receivedDaysAgo: daysAgo,
       notes: item.previewText || existing?.notes || "",
       enquiryDesc: item.previewText || `Virtual Yard enquiry - ${item.status || "NEW"}`,
@@ -341,7 +341,7 @@ async function runSeed(filePath) {
         phone: cust.phone || existing?.phone || "",
         email: cust.email || existing?.email || "",
         stockNum: existing?.stockNum || "",
-        control: "AI active",
+        control: "Human",
         notes: `Test Drive Booking (${td.status || "Confirmed"})`,
         enquiryDesc: `Test drive scheduled for ${td.testDriveDate ? new Date(td.testDriveDate).toLocaleDateString() : "upcoming date"}`,
         enquiryNote: `Location: ${td.location}`,

@@ -87,7 +87,7 @@ function mapStage(lead, hasTestDrive) {
   if (status.includes("BOOKING") || status.includes("TEST DRIVE")) return "TEST DRIVE BOOKED";
   if (status.includes("ORDER") || status.includes("SIGNED") || status.includes("FINALISE") || stage === "complete") return "DELIVERED";
   if (status.includes("LOST") || status.includes("CANCELLED")) return "LOST";
-  if (stage === "in_contact" || stage === "assigned") return "AI QUALIFYING";
+  if (stage === "in_contact" || stage === "assigned") return "IN FOLLOW-UP";
   return "NEW ENQUIRIES";
 }
 
@@ -164,7 +164,7 @@ async function seedVirtualyard() {
       phone,
       email,
       stockNum,
-      control: item.assignedTo ? `Assigned: ${item.assignedTo}` : "AI active",
+      control: item.assignedTo ? `Assigned: ${item.assignedTo}` : "Human",
       notes: item.previewText || "",
       enquiryDesc: item.previewText || `Virtual Yard enquiry - ${item.status || "NEW"}`,
       enquiryNote: item.status ? `Status: ${item.status} | Stage: ${item.stageText || item.stage}` : "",
@@ -232,7 +232,7 @@ async function seedVirtualyard() {
         phone: cust.phone || "",
         email: cust.email || "",
         stockNum: "",
-        control: "AI active",
+        control: "Human",
         notes: `Test Drive Booking (${td.status || "Confirmed"})`,
         enquiryDesc: `Test drive scheduled for ${td.testDriveDate ? new Date(td.testDriveDate).toLocaleDateString() : "upcoming date"}`,
         enquiryNote: `Location: ${td.location}`,

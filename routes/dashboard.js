@@ -60,7 +60,7 @@ router.get("/", async (req, res) => {
       invTotal,
     ] = await Promise.all([
       Lead.countDocuments(leadFilter),
-      Lead.countDocuments({ ...leadFilter, stage: "AI QUALIFYING" }),
+      Lead.countDocuments({ ...leadFilter, stage: { $in: ["IN FOLLOW-UP", "AI QUALIFYING"] } }),
       Lead.countDocuments({ ...leadFilter, stage: "TEST DRIVE BOOKED" }),
       Lead.countDocuments({ ...leadFilter, control: { $regex: "Human", $options: "i" } }),
       Appointment.countDocuments({ ...apptFilter, status: "Confirmed" }),
@@ -92,11 +92,11 @@ router.get("/", async (req, res) => {
     const imported = totalLeads;
     const engaged = await Lead.countDocuments({
       ...leadFilter,
-      stage: { $in: ["AI QUALIFYING", "TEST DRIVE BOOKED", "DELIVERED"] },
+      stage: { $in: ["IN FOLLOW-UP", "AI QUALIFYING", "TEST DRIVE BOOKED", "DELIVERED"] },
     });
     const qualified = await Lead.countDocuments({
       ...leadFilter,
-      stage: { $in: ["AI QUALIFYING", "TEST DRIVE BOOKED", "DELIVERED"] },
+      stage: { $in: ["IN FOLLOW-UP", "AI QUALIFYING", "TEST DRIVE BOOKED", "DELIVERED"] },
       score: { $gte: 50 },
     });
     const committed = Math.max(testDriveBooked, appointments);
@@ -107,11 +107,11 @@ router.get("/", async (req, res) => {
         ? recentAuditTrails.map((a) => ({
             id: a._id.toString(),
             title: a.message,
-            meta: `◷ ${timeAgo(a.createdAt)} · ${a.actor || "Ava AI"}`,
+            meta: `◷ ${timeAgo(a.createdAt)} · ${a.actor || "Sales Team"}`,
           }))
         : [
             { id: "1", title: "Demo Dataset Synchronized", meta: "◷ just now · Demo System" },
-            { id: "2", title: "AI Qualification Active", meta: "◷ 5m ago · Ava AI" },
+            { id: "2", title: "Staff Follow-up", meta: "◷ 5m ago · Sales Team" },
             { id: "3", title: "SMS Gateway Online", meta: "◷ 10m ago · Twilio SMS" },
           ];
 

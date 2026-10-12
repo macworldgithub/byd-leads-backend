@@ -707,7 +707,7 @@ function customerToLead(c) {
     phone: c.mobilePhone || c.homePhone || "",
     email: "",
     stockNum: "",
-    control: "AI active",
+    control: "Human",
     receivedDaysAgo: c.leadCreatedDate
       ? Math.floor((Date.now() - new Date(c.leadCreatedDate).getTime()) / 86400000)
       : 0,

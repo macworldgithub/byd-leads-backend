@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Setting = require("../models/Setting");
 const mobileMessage = require("../services/mobileMessage");
+const { authenticate } = require("../middleware/auth");
 
 // Helper to get or create default SMS config
 async function getOrCreateSmsConfig() {
@@ -184,7 +185,7 @@ router.post("/sms/test", async (req, res) => {
 
 // POST /api/settings/sms/send-test
 // Sends an actual test SMS to a phone number to verify end-to-end delivery
-router.post("/sms/send-test", async (req, res) => {
+router.post("/sms/send-test", authenticate, async (req, res) => {
   try {
     const { to, message } = req.body;
     if (!to) {
@@ -196,6 +197,7 @@ router.post("/sms/send-test", async (req, res) => {
       `BYD Leads Manager: Test SMS dispatched successfully via MobileMessage gateway at ${new Date().toLocaleTimeString("en-AU")}. Reply STOP to opt out`;
 
     const result = await mobileMessage.sendSms({
+      requestedBy: req.user.id || req.user.email,
       to,
       message: testBody,
     });
