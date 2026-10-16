@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const { authenticate } = require("../middleware/auth");
+const { siteConditions } = require('../services/staffDirectory');
 
 // Helper to escape regex
 function escapeRegex(str) {
@@ -22,18 +23,10 @@ router.get("/", authenticate, async (req, res) => {
 
     if (!hasFullAccess) {
       // Locked to specific site
-      const safeSite = escapeRegex(userLockedSite.trim());
-      filter.$or = [
-        { locked_site: { $regex: `^${safeSite}$`, $options: "i" } },
-        { site: { $regex: `^${safeSite}$`, $options: "i" } },
-      ];
+      filter.$or = await siteConditions(User.db, userLockedSite);
     } else if (req.query.site && req.query.site !== "All" && req.query.site !== "All Sites" && req.query.site !== "All Locations") {
       // User with full access filtering by a specific site
-      const safeSite = escapeRegex(req.query.site.trim());
-      filter.$or = [
-        { locked_site: { $regex: `^${safeSite}$`, $options: "i" } },
-        { site: { $regex: `^${safeSite}$`, $options: "i" } },
-      ];
+      filter.$or = await siteConditions(User.db, req.query.site);
     }
 
     // Optional text search
