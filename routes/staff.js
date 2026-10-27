@@ -17,7 +17,8 @@ router.get("/", authenticate, async (req, res) => {
   try {
     const isSuperAdmin = req.user?.role === "super_admin" || req.user?.role === "admin";
     const userLockedSite = req.user?.locked_site || "";
-    const hasFullAccess = isSuperAdmin || !userLockedSite;
+    const managedScope = Array.isArray(req.user?.allowed_sites) && !req.user.all_sites;
+    const hasFullAccess = !managedScope && (isSuperAdmin || !userLockedSite);
 
     const filter = { active: { $ne: false } };
 

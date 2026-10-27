@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const { authenticate, generateToken } = require("../middleware/auth");
+const { hasPlatform } = require('../services/accountAccess');
 
 // Helper to seed or update Nunawading user
 async function seedNunawadingUser() {
@@ -45,11 +46,6 @@ router.post("/login", async (req, res) => {
     const cleanEmail = email.toLowerCase().trim();
     let user = await User.findOne({ email: cleanEmail, active: true }).select("+password_hash");
 
-    // Auto-seed nunawading user if it doesn't exist yet
-    if (!user && cleanEmail === "nunawading@byd.com") {
-      user = await seedNunawadingUser();
-    }
-
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
@@ -58,6 +54,7 @@ router.post("/login", async (req, res) => {
     if (!isValid) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
+    if (!hasPlatform(user, 'lead_centre')) return res.status(403).json({ error: 'Lead Centre access is not assigned to this account.' });
 
     user.last_login_at = new Date();
     await user.save();
@@ -70,6 +67,9 @@ router.post("/login", async (req, res) => {
       role: user.role,
       site: user.site,
       locked_site: user.locked_site,
+      allowed_sites: user.allowed_sites,
+      all_sites: user.all_sites,
+      platform_access: user.platform_access,
     };
 
     res.json({
@@ -97,6 +97,9 @@ router.get("/me", authenticate, async (req, res) => {
       role: user.role,
       site: user.site,
       locked_site: user.locked_site,
+      allowed_sites: user.allowed_sites,
+      all_sites: user.all_sites,
+      platform_access: user.platform_access,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -104,7 +107,8 @@ router.get("/me", authenticate, async (req, res) => {
 });
 
 // ── POST /api/auth/seed ──────────────────────────────────────────────────────
-router.post("/seed", async (req, res) => {
+router.post("/seed", authenticate, async (req, res) => {
+  if (req.user.email !== 'devs@omnisuiteai.com' || req.user.role !== 'super_admin') return res.status(403).json({ error: 'Owner access required.' });
   try {
     const user = await seedNunawadingUser();
     res.json({

@@ -1,8 +1,7 @@
-const runSeed = require("../seed/seed-both");
+const { main } = require("../seed/upsert-both");
 
 if (require.main === module) {
-  const filePathArg = process.argv[2];
-  runSeed(filePathArg)
+  main()
     .then(() => process.exit(0))
     .catch((err) => {
       console.error(err);
@@ -10,4 +9,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = runSeed;
+module.exports = require("../seed/seed-both");

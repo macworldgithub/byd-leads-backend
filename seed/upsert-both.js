@@ -13,6 +13,14 @@ const name = customer => customer?.fullName || [customer?.firstName, customer?.l
 const label = vehicle => vehicle?.raw || [vehicle?.year, vehicle?.colour, vehicle?.make, vehicle?.model].filter(Boolean).join(' ').trim();
 const price = vehicle => vehicle?.price ? '$' + Number(vehicle.price).toLocaleString('en-AU') : vehicle?.priceRaw || '';
 const emit = data => console.log(JSON.stringify(data));
+const optedOut = existing => !!(existing?.do_not_contact || existing?.doNotContact || existing?.opted_out || existing?.status === 'opted out' || existing?.tag === 'Opted Out');
+const driveDetails = (drive, existing) => ({
+  ...(existing?.testDrive || {}),
+  testDriveDate: date(drive.testDriveDate) || existing?.testDrive?.testDriveDate || null,
+  location: drive.location || existing?.testDrive?.location || '',
+  status: ['Completed', 'Cancelled', 'No Show'].includes(existing?.testDrive?.status) ? existing.testDrive.status : drive.status || 'Confirmed',
+  confirmed: drive.status !== 'Cancelled',
+});
 
 function changedFields(existing, desired) {
   const patch = {};
@@ -86,13 +94,18 @@ function buildPlan(payload, stored) {
     const id = sourceId(drive._id);
     if (!id || driveIds.has(id)) throw new Error('Missing or duplicate test-drive ID');
     driveIds.add(id);
-    if (drive.leadId) drives.set(String(drive.leadId), drive);
+    if (drive.leadId) {
+      const previous = drives.get(String(drive.leadId));
+      if (!previous || (date(drive.testDriveDate)?.getTime() || 0) > (date(previous.testDriveDate)?.getTime() || 0)) drives.set(String(drive.leadId), drive);
+    }
   }
   for (const [id, item] of sourceLeads) {
     const drive = drives.get(id);
     const vehicle = item.vehicle || {};
     upsert('leads', id, existing => {
-      const optedOut = existing?.do_not_contact || existing?.status === 'opted out' || existing?.tag === 'Opted Out';
+      const restricted = optedOut(existing);
+      const activeDrive = !!drive && (!date(drive.testDriveDate) || date(drive.testDriveDate) >= snapshot);
+      const received = date(item.leadDate) || date(existing?.leadDate) || date(item.scrapedAt) || snapshot;
       return {
         name: name(item.customer) || name(drive?.customer) || existing?.name || 'Prospect',
         phone: item.customer?.phone || item.customer?.mobilePhone || item.customer?.homePhone || drive?.customer?.phone || existing?.phone || '',
@@ -100,9 +113,9 @@ function buildPlan(payload, stored) {
         vehicle: label(vehicle) || existing?.vehicle || 'BYD Vehicle',
         dealer: vehicle.yard || drive?.location || existing?.dealer || 'BYD Dealership',
         stockNum: vehicle.stockNo || existing?.stockNum || '', price: price(vehicle) || existing?.price || '', paintColor: vehicle.colour || existing?.paintColor || '',
-        score: helpers.calculateScore(item, !!drive), color: helpers.mapColor(item, !!drive),
-        tag: optedOut ? 'Opted Out' : helpers.mapStatus(item, !!drive) === 'lost' ? 'Contact' : helpers.mapTag(item, !!drive),
-        stage: optedOut ? existing.stage : helpers.mapStage(item, !!drive), status: optedOut ? existing.status : helpers.mapStatus(item, !!drive),
+        score: helpers.calculateScore(item, activeDrive), color: helpers.mapColor(item, activeDrive),
+        tag: restricted ? 'Opted Out' : helpers.mapTag(item, activeDrive),
+        stage: restricted ? existing.stage : helpers.mapStage(item, activeDrive), status: restricted ? existing.status : helpers.mapStatus(item, activeDrive),
         control: existing?.control && !/^ai/i.test(existing.control) ? existing.control : 'Human',
         source: item.source || 'Virtual Yard', platform: 'virtualyard',
         leadId: existing ? existing.leadId : id, virtualyardId: existing?.virtualyardId || id,
@@ -116,7 +129,8 @@ function buildPlan(payload, stored) {
         lastContact: item.lastContact || existing?.lastContact || '',
         leadDate: date(item.leadDate) || existing?.leadDate || date(item.scrapedAt) || snapshot,
         leadCreatedDate: date(item.leadDate) || existing?.leadCreatedDate || date(item.scrapedAt) || snapshot,
-        testDrive: drive ? { testDriveDate: date(drive.testDriveDate), location: drive.location || existing?.testDrive?.location || '', status: drive.status || 'Confirmed', confirmed: true } : existing?.testDrive,
+        receivedDaysAgo: Math.max(0, Math.floor((snapshot - received) / 86400000)),
+        testDrive: drive ? driveDetails(drive, existing) : existing?.testDrive,
       };
     });
   }
@@ -129,22 +143,24 @@ function buildPlan(payload, stored) {
         name: name(drive.customer) || existing?.name || 'Test Drive Prospect', phone: drive.customer?.phone || existing?.phone || '', email: drive.customer?.email || existing?.email || '',
         vehicle: existing?.vehicle || 'BYD Vehicle', dealer: drive.location || existing?.dealer || 'BYD Dealership',
         platform: 'virtualyard', leadId: existing ? existing.leadId : id, virtualyardId: existing?.virtualyardId || id, source: 'Virtual Yard Test Drive',
-        score: 90, tag: existing?.tag === 'Opted Out' ? 'Opted Out' : 'Commitment', color: 'green',
-        stage: existing?.status === 'opted out' ? existing.stage : 'TEST DRIVE BOOKED', status: existing?.status === 'opted out' ? 'opted out' : 'committed', control: 'Human',
+        score: 90, tag: optedOut(existing) ? 'Opted Out' : 'Commitment', color: 'green',
+        stage: optedOut(existing) ? existing.stage : 'TEST DRIVE BOOKED', status: optedOut(existing) ? existing.status : 'committed',
+        control: existing?.control && !/^ai/i.test(existing.control) ? existing.control : 'Human',
         notes: existing?.notes || `Test Drive Booking (${drive.status || 'Confirmed'})`,
-        testDrive: { testDriveDate: date(drive.testDriveDate), location: drive.location || existing?.testDrive?.location || '', status: drive.status || 'Confirmed', confirmed: true },
+        testDrive: driveDetails(drive, existing),
         leadDate: existing?.leadDate || date(drive.testDriveDate) || snapshot,
       }));
     }
     upsert('appointments', sourceId(drive._id), existing => ({
-      appointmentId: sourceId(drive._id), leadId: externalLead,
-      when: drive.testDriveDate ? helpers.formatAppointmentWhen(drive.testDriveDate) : existing?.when || 'Upcoming Date',
+      appointmentId: sourceId(drive._id), leadId: linked ? externalLead : 'td-' + sourceId(drive._id),
+      when: date(drive.testDriveDate)?.toISOString() || existing?.when || 'Upcoming Date',
       prospectName: name(drive.customer) || existing?.prospectName || 'Test Drive Prospect',
       phone: drive.customer?.phone || existing?.phone || '', email: drive.customer?.email || existing?.email || '',
       vehicle: label(linked?.vehicle) || existing?.vehicle || 'BYD Vehicle',
       dealership: drive.location || existing?.dealership || 'BYD Dealership', location: drive.location || existing?.location || 'BYD Dealership',
       bookedBy: existing?.bookedBy && existing.bookedBy !== 'AI' ? existing.bookedBy : 'Manual',
-      status: drive.status || existing?.status || 'Confirmed', testDriveDate: date(drive.testDriveDate) || existing?.testDriveDate || null,
+      status: ['Completed', 'Cancelled', 'No Show'].includes(existing?.status) ? existing.status : drive.status || existing?.status || 'Confirmed',
+      testDriveDate: date(drive.testDriveDate) || existing?.testDriveDate || null,
       scrapedAt: date(drive.scrapedAt) || snapshot, platform: 'virtualyard', type: 'Test Drive',
     }));
   }
@@ -153,6 +169,9 @@ function buildPlan(payload, stored) {
       identifier: id, platform: 'virtualyard', stock: vehicle.stockNo || existing?.stock || '', model: vehicle.model || existing?.model || '', paint: vehicle.colour || existing?.paint || '',
       location: vehicle.yard || existing?.location || 'BYD Dealership', title: label(vehicle) || existing?.title || 'BYD Vehicle',
       price: price(vehicle) || existing?.price || '', status: existing?.status || 'Available',
+      priceData: Number.isFinite(Number(vehicle.price)) && vehicle.price != null && vehicle.price !== ''
+        ? { ...(existing?.priceData || {}), ui: Number(vehicle.price), currency: 'AUD', label: existing?.priceData?.label || 'DAP' }
+        : existing?.priceData,
       specifications: { ...(existing?.specifications || {}), ...(vehicle.make ? { make: vehicle.make } : {}), ...(vehicle.model ? { model: vehicle.model } : {}), ...(vehicle.year ? { year: Number(vehicle.year) } : {}), ...(vehicle.colour ? { colour: vehicle.colour } : {}) },
     }));
   }

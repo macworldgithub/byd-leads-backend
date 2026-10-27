@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["super_admin", "admin", "sales_manager", "agent", "consultant", "sales_consultant"],
+      enum: ["super_admin", "admin", "site_admin", "sales_manager", "agent", "consultant", "sales_consultant", "bdc", "delivery", "contractor"],
       default: "agent",
     },
     site: {
@@ -32,6 +32,11 @@ const userSchema = new mongoose.Schema(
       required: true,
       select: false,
     },
+    allowed_sites: { type: [String], default: undefined },
+    all_sites: { type: Boolean, default: undefined },
+    platform_access: { type: [String], default: undefined },
+    auth_version: { type: Number, default: 0 },
+    deleted_at: { type: Date, default: null },
     active: {
       type: Boolean,
       default: true,

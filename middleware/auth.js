@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { hasPlatform, resolveSite, guardResourceSite } = require('../services/accountAccess');
 
 const JWT_SECRET = process.env.JWT_SECRET || "byd_lead_centre_secret_2026";
 
@@ -15,21 +16,30 @@ const decodeToken = (req) => {
   }
 };
 
-const authenticate = (req, res, next) => {
+const authenticate = async (req, res, next) => {
   const decoded = decodeToken(req);
   if (!decoded) {
     return res.status(401).json({ success: false, error: "Authentication required" });
   }
-  req.user = decoded;
-  next();
+  try {
+    const User = require('../models/User');
+    const account = await User.findById(decoded.id).lean();
+    if (!account || account.active === false || account.deleted_at || (decoded.auth_version || 0) !== (account.auth_version || 0)) return res.status(401).json({ success: false, error: 'Session revoked. Please sign in again.' });
+    if (!hasPlatform(account, 'lead_centre')) return res.status(403).json({ success: false, error: 'Lead Centre access is not assigned to this account.' });
+    const requested = req.headers['x-site'] || req.query.dealer || req.query.site || req.query.yard || req.query.location || req.body?.dealer;
+    req.user = { ...decoded, id: String(account._id), name: account.name, email: account.email, role: account.role, site: account.site,
+      locked_site: resolveSite(account, requested), allowed_sites: account.allowed_sites, all_sites: account.all_sites };
+    await guardResourceSite(req, User.db);
+    return enforceSiteLock(req, res, next);
+  } catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ success: false, error: error.message });
+    next(error);
+  }
 };
 
 const optionalAuth = (req, res, next) => {
-  const decoded = decodeToken(req);
-  if (decoded) {
-    req.user = decoded;
-  }
-  next();
+  if (req.headers.authorization) return authenticate(req, res, next);
+  return next();
 };
 
 const enforceSiteLock = (req, res, next) => {
@@ -60,6 +70,10 @@ const generateToken = (user) => {
       role: user.role,
       site: user.site || "",
       locked_site: user.locked_site || "",
+      auth_version: user.auth_version || 0,
+      platform: 'lead_centre',
+      allowed_sites: user.allowed_sites,
+      all_sites: user.all_sites,
     },
     JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || "24h" }

@@ -18,7 +18,7 @@ const auditTrailsRouter = require("./routes/auditTrails");
 
 const authRouter = require("./routes/auth");
 const staffRouter = require("./routes/staff");
-const { optionalAuth, enforceSiteLock } = require("./middleware/auth");
+const { authenticate } = require("./middleware/auth");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -26,8 +26,11 @@ const PORT = process.env.PORT || 4000;
 // ── Middleware ──────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
-app.use(optionalAuth);
-app.use(enforceSiteLock);
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth/')) return next();
+  if (req.method === 'POST' && /^\/(webhooks|conversations)\/(inbound|status)$/.test(req.path)) return next();
+  return authenticate(req, res, next);
+});
 
 // ── Health check ────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

@@ -80,3 +80,73 @@ test('unmatched test drives are retained and booked manually without duplicate r
   assert.equal(second.leads.operations.length, 0);
   assert.equal(second.appointments.operations.length, 0);
 });
+
+test('cancellation and lost statuses take precedence over order text, completion and bookings', () => {
+  for (const status of ['ORDER-CANCELLED', 'ORDER-CANCELLATION-REQUEST', 'LOST', 'Lost']) {
+    const source = payload([{ ...item, stage: 'complete', status }], [{ _id: 'drive-1', leadId: item.leadId, testDriveDate: '2026-11-01T10:00:00Z' }]);
+    const lead = buildPlan(source, empty()).leads.operations[0].updateOne.update.$setOnInsert;
+    assert.equal(lead.status, 'lost', status);
+    assert.equal(lead.stage, 'LOST', status);
+    assert.equal(lead.tag, 'Contact', status);
+    assert.equal(lead.score, 20, status);
+    assert.equal(lead.color, 'red', status);
+  }
+});
+
+test('completed leads and historical drives do not become active bookings', () => {
+  const drive = { _id: 'drive-1', leadId: item.leadId, testDriveDate: '2026-10-01T10:00:00Z' };
+  const historical = buildPlan(payload([item], [drive]), empty()).leads.operations[0].updateOne.update.$setOnInsert;
+  assert.equal(historical.stage, 'IN FOLLOW-UP');
+  const completed = buildPlan(payload([{ ...item, stage: 'complete', status: 'FINALISE' }], [{ ...drive, testDriveDate: '2026-11-01T10:00:00Z' }]), empty()).leads.operations[0].updateOne.update.$setOnInsert;
+  assert.equal(completed.stage, 'DELIVERED');
+});
+
+test('the latest drive is selected regardless of source order and dates are stored as ISO', () => {
+  const newer = { _id: 'newer', leadId: item.leadId, testDriveDate: '2026-11-01T10:00:00Z' };
+  const older = { _id: 'older', leadId: item.leadId, testDriveDate: '2026-10-01T10:00:00Z' };
+  const first = buildPlan(payload([item], [newer, older]), empty());
+  const lead = first.leads.operations[0].updateOne.update.$setOnInsert;
+  assert.equal(lead.testDrive.testDriveDate.toISOString(), '2026-11-01T10:00:00.000Z');
+  assert.equal(first.appointments.operations[0].updateOne.update.$setOnInsert.when, '2026-11-01T10:00:00.000Z');
+  const second = buildPlan(payload([item], [older, newer]), apply(empty(), first));
+  assert.equal(second.leads.operations.length, 0);
+  assert.equal(second.appointments.operations.length, 0);
+});
+
+test('imported drives preserve staff appointment outcomes and missing dates retain stored dates', () => {
+  const drive = { _id: 'drive-1', leadId: item.leadId, status: 'Confirmed', testDriveDate: null };
+  const stored = empty();
+  stored.appointments.push({ _id: new mongoose.Types.ObjectId(), platform: 'virtualyard', appointmentId: drive._id, status: 'Completed', testDriveDate: new Date(snapshot), when: snapshot });
+  stored.leads.push({ _id: new mongoose.Types.ObjectId(), platform: 'virtualyard', leadId: item.leadId, testDrive: { status: 'Completed', testDriveDate: new Date(snapshot), location: 'BYD Melbourne City' } });
+  const plan = buildPlan(payload([item], [drive]), stored);
+  const updated = apply(stored, plan);
+  assert.equal(updated.appointments[0].status, 'Completed');
+  assert.equal(updated.leads[0].testDrive.status, 'Completed');
+  assert.equal(updated.leads[0].testDrive.testDriveDate.toISOString(), snapshot);
+});
+
+test('test drive prospects preserve consent flags and appointments link to the synthetic prospect', () => {
+  const source = payload([], [{ _id: 'drive-1', customer: { fullName: 'Test Customer' } }]);
+  const stored = empty();
+  stored.leads.push({ _id: new mongoose.Types.ObjectId(), platform: 'virtualyard', leadId: 'td-drive-1', doNotContact: true, status: 'opted out', stage: 'OPTED OUT', control: 'Assigned: Sales Consultant' });
+  const updated = apply(stored, buildPlan(source, stored));
+  assert.equal(updated.leads[0].status, 'opted out');
+  assert.equal(updated.leads[0].control, 'Assigned: Sales Consultant');
+  assert.equal(updated.appointments[0].leadId, 'td-drive-1');
+});
+
+test('an explicitly missing source file fails instead of importing a stale fallback', () => {
+  const { findBothJson } = require('../seed/seed-both');
+  assert.throws(() => findBothJson('missing-source-file.json'), /Source file does not exist/);
+});
+
+test('display and numeric inventory prices stay in sync without changing stock availability', () => {
+  const stored = empty();
+  stored.inventories.push({ _id: new mongoose.Types.ObjectId(), identifier: 'stock-1', platform: 'virtualyard', price: '$60,000', priceData: { ui: 60000, currency: 'AUD', label: 'Drive Away' }, status: 'Sold' });
+  const source = payload([{ ...item, vehicle: { ...item.vehicle, price: 55000 } }]);
+  const updated = apply(stored, buildPlan(source, stored));
+  assert.equal(updated.inventories[0].price, '$55,000');
+  assert.equal(updated.inventories[0].priceData.ui, 55000);
+  assert.equal(updated.inventories[0].priceData.label, 'Drive Away');
+  assert.equal(updated.inventories[0].status, 'Sold');
+});
