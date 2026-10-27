@@ -9,6 +9,7 @@ async function seedNunawadingUser() {
   const password = "123456";
   const site = "BYD Nunawading";
 
+
   let user = await User.findOne({ email }).select("+password_hash");
   if (user) {
     user.name = "BYD Nunawading";
