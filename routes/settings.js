@@ -13,7 +13,7 @@ async function getOrCreateSmsConfig() {
       process.env.MOBILEMESSAGE_PASSWORD ||
       process.env.MOBILEMESSAGE_API_KEY ||
       "8qIw3KM6gh7C779tVhzFnK1bBZUHgmOFk5omhWtTEZp";
-    const defaultSender = process.env.MOBILEMESSAGE_SENDER_ID || "+61468104118";
+    const defaultSender = process.env.MOBILEMESSAGE_SENDER_ID || "HARMONY";
     const defaultSimulation = process.env.MOBILEMESSAGE_SIMULATION_MODE === "true";
 
     config = await Setting.create({
@@ -35,7 +35,7 @@ async function getOrCreateSmsConfig() {
 router.get("/sms", async (req, res) => {
   try {
     const config = await getOrCreateSmsConfig();
-    res.json(config);
+    res.json({ ...config.toObject(), senderId: process.env.MOBILEMESSAGE_SENDER_ID || config.senderId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -50,7 +50,7 @@ router.put("/sms", async (req, res) => {
     if (username !== undefined) updateFields.username = username.trim();
     if (apiKey !== undefined) updateFields.apiKey = apiKey.trim();
     if (simulationMode !== undefined) updateFields.simulationMode = Boolean(simulationMode);
-    if (senderId !== undefined) updateFields.senderId = senderId.trim();
+    if (senderId !== undefined) updateFields.senderId = process.env.MOBILEMESSAGE_SENDER_ID || senderId.trim();
 
     const config = await Setting.findOneAndUpdate(
       { key: "sms_config" },
@@ -91,7 +91,7 @@ router.post("/sms/test", async (req, res) => {
 
     username = (username || "").trim();
     apiKey = (apiKey || "").trim();
-    senderId = (senderId || "").trim();
+    senderId = process.env.MOBILEMESSAGE_SENDER_ID || (senderId || "").trim();
     simulationMode = Boolean(simulationMode !== undefined ? simulationMode : false);
 
     // Validation
@@ -158,7 +158,7 @@ router.post("/sms/test", async (req, res) => {
           username,
           apiKey,
           simulationMode,
-          senderId: senderId || "+61468104118",
+          senderId: senderId || "HARMONY",
           connectionStatus: "connected",
           lastTestedAt: new Date(),
           connectionMessage: successMsg,
