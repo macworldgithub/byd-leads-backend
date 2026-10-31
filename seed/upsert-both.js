@@ -45,9 +45,11 @@ function buildPlan(payload, stored) {
   for (const collection of Object.keys(models)) {
     indexes[collection] = new Map();
     for (const document of stored[collection] || []) {
-      if (document.platform !== 'virtualyard') continue;
-      for (const field of keyFields[collection]) {
-        const id = sourceId(document[field]);
+      const syncedBooking = collection === 'appointments' && document.virtualyardSync?.state === 'synced'
+        ? sourceId(document.virtualyardSync.externalId) : '';
+      if (document.platform !== 'virtualyard' && !syncedBooking) continue;
+      const identities = [...keyFields[collection].map(field => sourceId(document[field])), syncedBooking];
+      for (const id of new Set(identities)) {
         if (!id) continue;
         const list = indexes[collection].get(id) || [];
         if (!list.some(doc => String(doc._id) === String(document._id))) list.push(document);
@@ -64,7 +66,7 @@ function buildPlan(payload, stored) {
         const patch = changedFields(existing, desired);
         if (!Object.keys(patch).length) { plans[collection].unchanged++; continue; }
         plans[collection].updated++;
-        plans[collection].operations.push({ updateOne: { filter: { _id: existing._id, platform: 'virtualyard', updatedAt: existing.updatedAt || null }, update: { $set: { ...patch, updatedAt: new Date() } } } });
+        plans[collection].operations.push({ updateOne: { filter: { _id: existing._id, platform: Object.hasOwn(existing, 'platform') ? existing.platform : { $exists: false }, updatedAt: existing.updatedAt || null }, update: { $set: { ...patch, updatedAt: new Date() } } } });
       }
     } else {
       const document = new models[collection](build(null));
@@ -152,16 +154,19 @@ function buildPlan(payload, stored) {
       }));
     }
     upsert('appointments', sourceId(drive._id), existing => ({
-      appointmentId: sourceId(drive._id), leadId: linked ? externalLead : 'td-' + sourceId(drive._id),
+      appointmentId: sourceId(drive._id),
+      leadId: existing?.virtualyardSync?.state === 'synced' ? existing.leadId : linked ? externalLead : 'td-' + sourceId(drive._id),
       when: date(drive.testDriveDate)?.toISOString() || existing?.when || 'Upcoming Date',
       prospectName: name(drive.customer) || existing?.prospectName || 'Test Drive Prospect',
       phone: drive.customer?.phone || existing?.phone || '', email: drive.customer?.email || existing?.email || '',
       vehicle: label(linked?.vehicle) || existing?.vehicle || 'BYD Vehicle',
       dealership: drive.location || existing?.dealership || 'BYD Dealership', location: drive.location || existing?.location || 'BYD Dealership',
+      site: existing?.virtualyardSync?.state === 'synced' ? drive.location || existing.site : undefined,
       bookedBy: existing?.bookedBy && existing.bookedBy !== 'AI' ? existing.bookedBy : 'Manual',
       status: ['Completed', 'Cancelled', 'No Show'].includes(existing?.status) ? existing.status : drive.status || existing?.status || 'Confirmed',
       testDriveDate: date(drive.testDriveDate) || existing?.testDriveDate || null,
-      scrapedAt: date(drive.scrapedAt) || snapshot, platform: 'virtualyard', type: 'Test Drive',
+      scrapedAt: date(drive.scrapedAt) || snapshot,
+      platform: existing?.virtualyardSync?.state === 'synced' ? existing.platform : 'virtualyard', type: 'Test Drive',
     }));
   }
   for (const [id, vehicle] of vehicles) {
@@ -196,7 +201,7 @@ async function main(args = process.argv.slice(2)) {
     emit({ database: db.databaseName, source: file, sourceSnapshot: payload.scrapedAt, dryRun, summary });
     if (dryRun) return summary;
     const backupPath = path.resolve(backupArg.slice('--backup='.length));
-    fs.writeFileSync(backupPath, BSON.EJSON.stringify({ database: db.databaseName, backedUpAt: new Date(), collections: stored }, { relaxed: false }), { flag: 'wx' });
+    fs.writeFileSync(backupPath, BSON.EJSON.stringify({ database: db.databaseName, backedUpAt: new Date(), collections: stored }, { relaxed: false }), { flag: 'wx', mode: 0o600 });
     const applied = {};
     for (const [collection, plan] of Object.entries(plans)) {
       let inserted = 0, updated = 0;

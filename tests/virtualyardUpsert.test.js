@@ -26,6 +26,29 @@ test('new records have stable IDs and a second import has no operations', () => 
   assert.equal(second.inventories.operations.length, 0);
 });
 
+test('a CRM-created synced booking is updated by its external ID without a duplicate or relinking', () => {
+  const stored = empty();
+  const localId = new mongoose.Types.ObjectId();
+  const localLead = new mongoose.Types.ObjectId();
+  stored.appointments.push({ _id: localId, leadId: localLead, customer_id: 'CRM-1', notes: 'Staff notes',
+    platform: 'manual', virtualyardSync: { state: 'synced', externalId: 'drive-1' },
+    status: 'Completed', when: '2026-10-11T12:00:00.000Z', prospectName: 'Driver', updatedAt: new Date(snapshot) });
+  const source = payload([], [{ _id: 'drive-1', customer: { fullName: 'Driver' }, location: 'BYD Fairfield', testDriveDate: '2026-10-11T12:00:00Z', status: 'Confirmed' }]);
+  const plans = buildPlan(source, stored);
+  assert.equal(plans.appointments.inserted, 0);
+  assert.equal(plans.appointments.updated, 1);
+  const op = plans.appointments.operations[0].updateOne;
+  assert.equal(String(op.filter._id), String(localId));
+  assert.equal(op.filter.platform, 'manual');
+  assert.equal(op.update.$set.leadId, undefined);
+  assert.equal(op.update.$set.customer_id, undefined);
+  assert.equal(op.update.$set.notes, undefined);
+  assert.equal(op.update.$set.virtualyardSync, undefined);
+  assert.equal(op.update.$set.platform, undefined);
+  assert.equal(op.update.$set.status, undefined);
+  assert.equal(buildPlan(source, apply(stored, plans)).appointments.operations.length, 0);
+});
+
 test('updates preserve Mongo IDs, staff notes, consent and manual SMS control', () => {
   const stored = empty();
   stored.leads.push({ _id: new mongoose.Types.ObjectId(), platform: 'virtualyard', leadId: item.leadId, virtualyardId: item.leadId, name: 'Old Name', notes: 'Staff note', do_not_contact: true, tag: 'Opted Out', status: 'opted out', stage: 'OPTED OUT', control: 'Human', updatedAt: new Date(snapshot) });
