@@ -8,37 +8,214 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function buildLocationQuery(locVal) {
+  if (!locVal || ["all", "all locations", "all yards", "all sites"].includes(String(locVal).toLowerCase().trim())) {
+    return null;
+  }
+  const cleanVal = String(locVal).replace(/^BYD\s+/i, "").replace(/^DENZA\s+/i, "").trim();
+  const escaped = escapeRegex(cleanVal);
+  const rawEscaped = escapeRegex(String(locVal).trim());
+
+  const regexes = [
+    new RegExp(escaped, "i"),
+    new RegExp(rawEscaped, "i"),
+  ];
+  if (/caroline/i.test(cleanVal)) {
+    regexes.push(/caroline/i);
+    regexes.push(/\bcs\b/i);
+  }
+  if (/melbourne/i.test(cleanVal)) {
+    regexes.push(/melbourne/i);
+    regexes.push(/\bcbd\b/i);
+  }
+  if (/fairfield/i.test(cleanVal)) {
+    regexes.push(/fairfield/i);
+    regexes.push(/\bffd\b/i);
+  }
+  if (/nunawading/i.test(cleanVal)) {
+    regexes.push(/nunawading/i);
+    regexes.push(/\bnwd\b/i);
+  }
+  if (/wodonga/i.test(cleanVal)) {
+    regexes.push(/wodonga/i);
+    regexes.push(/\bwdg\b/i);
+  }
+  if (/doncaster/i.test(cleanVal)) {
+    regexes.push(/doncaster/i);
+    regexes.push(/\bdc\b/i);
+  }
+  if (/holding/i.test(cleanVal)) {
+    regexes.push(/holding/i);
+    regexes.push(/derrimut/i);
+  }
+
+  const orClauses = [];
+  for (const reg of regexes) {
+    orClauses.push({ location: reg });
+    orClauses.push({ orderYard: reg });
+    orClauses.push({ "shirleyData.outBoundStore": reg });
+  }
+  return { $or: orClauses };
+}
+
+function buildStatusQuery(statusVal) {
+  if (!statusVal || ["all", "all statuses", "all status"].includes(String(statusVal).toLowerCase().trim())) {
+    return null;
+  }
+  const s = String(statusVal).trim().toLowerCase();
+  if (s === "available" || s === "in stock" || s === "instock") {
+    return {
+      $or: [
+        { status: { $regex: /^in\s*stock$/i } },
+        { status: /^available$/i },
+        { itemStatus: /^instock$/i },
+      ]
+    };
+  }
+  if (s === "delivered") {
+    return { status: { $regex: /^deliver/i } };
+  }
+  if (s === "sold") {
+    return { status: { $regex: /^sold$/i } };
+  }
+  if (s === "in transit") {
+    return {
+      $or: [
+        { status: { $regex: /^in\s*transit$/i } },
+        { itemStatus: { $regex: /^in\s*transit$/i } },
+      ]
+    };
+  }
+  if (s === "demo") {
+    return {
+      $or: [
+        { status: { $regex: /^demo$/i } },
+        { condition: /^demo$/i },
+      ]
+    };
+  }
+  if (s === "display") {
+    return { status: { $regex: /^display$/i } };
+  }
+  if (s === "damage" || s === "damaged") {
+    return { status: { $regex: /^damage/i } };
+  }
+  if (s === "on hold" || s === "on-hold" || s === "held") {
+    return { status: { $regex: /^on[- ]?hold$|^held$/i } };
+  }
+  if (s === "allocated") {
+    return { status: { $regex: /^allocated$/i } };
+  }
+  return { status: { $regex: new RegExp(`^${escapeRegex(statusVal)}$`, "i") } };
+}
+
+// GET filter options
+router.get("/filters", async (req, res) => {
+  try {
+    const [locations, orderYards, models] = await Promise.all([
+      Inventory.distinct("location"),
+      Inventory.distinct("orderYard"),
+      Inventory.distinct("specifications.model"),
+    ]);
+
+    const cleanLocs = Array.from(new Set([...locations, ...orderYards]))
+      .filter(l => l && l !== "#N/A" && l !== "_" && l.length > 1)
+      .sort();
+
+    const cleanModels = Array.from(new Set(models))
+      .filter(m => m && m.length > 1)
+      .sort();
+
+    const statuses = [
+      "In Stock",
+      "Delivered",
+      "Sold",
+      "In Transit",
+      "Demo",
+      "Display",
+      "On Hold",
+      "Damage",
+      "Allocated",
+    ];
+
+    res.json({
+      locations: cleanLocs,
+      statuses,
+      models: cleanModels,
+      platforms: ["shirley", "virtualyard", "autogate", "dealer_studio", "manual"],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET all inventory (with optional filters)
 router.get("/", async (req, res) => {
   try {
-    const { model, status, location, condition, platform, q, page, limit, paginated } = req.query;
-    const filter = {};
+    const { model, status, location, yard, dealer, site, condition, platform, q, page, limit, paginated } = req.query;
+    const andClauses = [];
 
-    if (model) filter.model = { $regex: escapeRegex(model), $options: "i" };
-    if (status) filter.status = status;
-    const locVal = location || req.query.yard || req.query.dealer;
-    if (locVal && locVal !== "all" && locVal !== "All" && locVal !== "All Locations" && locVal !== "All Yards") {
-      filter.location = { $regex: escapeRegex(locVal), $options: "i" };
+    // Model filter
+    if (model && model !== "all" && model !== "All Models" && model !== "All") {
+      const safeModel = escapeRegex(model);
+      andClauses.push({
+        $or: [
+          { model: { $regex: safeModel, $options: "i" } },
+          { "specifications.model": { $regex: safeModel, $options: "i" } },
+          { title: { $regex: safeModel, $options: "i" } },
+        ],
+      });
     }
-    if (condition) filter.condition = condition;
-    if (platform) filter.platform = platform;
 
+    // Status filter
+    const statusQuery = buildStatusQuery(status);
+    if (statusQuery) {
+      andClauses.push(statusQuery);
+    }
+
+    // Yard / Location filter
+    const locVal = location || yard || dealer || site;
+    const locQuery = buildLocationQuery(locVal);
+    if (locQuery) {
+      andClauses.push(locQuery);
+    }
+
+    // Condition filter
+    if (condition && condition !== "all" && condition !== "All") {
+      andClauses.push({ condition });
+    }
+
+    // Platform filter
+    if (platform && platform !== "all" && platform !== "All") {
+      andClauses.push({ platform });
+    }
+
+    // Free text search
     if (q) {
       const safeQ = escapeRegex(q);
-      filter.$or = [
-        { stock: { $regex: safeQ, $options: "i" } },
-        { model: { $regex: safeQ, $options: "i" } },
-        { paint: { $regex: safeQ, $options: "i" } },
-        { title: { $regex: safeQ, $options: "i" } },
-        { identifier: { $regex: safeQ, $options: "i" } },
-        { networkId: { $regex: safeQ, $options: "i" } },
-        { "specifications.model": { $regex: safeQ, $options: "i" } },
-        { "specifications.colour": { $regex: safeQ, $options: "i" } },
-        { "specifications.manufacturerColour": { $regex: safeQ, $options: "i" } },
-        { "registration.rego": { $regex: safeQ, $options: "i" } },
-        { "registration.vin": { $regex: safeQ, $options: "i" } },
-      ];
+      andClauses.push({
+        $or: [
+          { stock: { $regex: safeQ, $options: "i" } },
+          { model: { $regex: safeQ, $options: "i" } },
+          { paint: { $regex: safeQ, $options: "i" } },
+          { location: { $regex: safeQ, $options: "i" } },
+          { orderYard: { $regex: safeQ, $options: "i" } },
+          { title: { $regex: safeQ, $options: "i" } },
+          { identifier: { $regex: safeQ, $options: "i" } },
+          { networkId: { $regex: safeQ, $options: "i" } },
+          { "specifications.model": { $regex: safeQ, $options: "i" } },
+          { "specifications.colour": { $regex: safeQ, $options: "i" } },
+          { "specifications.badge": { $regex: safeQ, $options: "i" } },
+          { "specifications.manufacturerColour": { $regex: safeQ, $options: "i" } },
+          { "registration.rego": { $regex: safeQ, $options: "i" } },
+          { "registration.vin": { $regex: safeQ, $options: "i" } },
+          { "shirleyData.salesConsultant": { $regex: safeQ, $options: "i" } },
+          { "shirleyData.poNumber": { $regex: safeQ, $options: "i" } },
+        ],
+      });
     }
+
+    const filter = andClauses.length > 0 ? (andClauses.length === 1 ? andClauses[0] : { $and: andClauses }) : {};
 
     const isPaginated = paginated === "true" || (page !== undefined && page !== "");
     if (isPaginated) {
@@ -47,7 +224,7 @@ router.get("/", async (req, res) => {
       const skip = (pageNum - 1) * pageSize;
 
       const [items, total] = await Promise.all([
-        Inventory.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(pageSize),
+        Inventory.find(filter).sort({ updatedAt: -1, createdAt: -1 }).skip(skip).limit(pageSize),
         Inventory.countDocuments(filter),
       ]);
 
@@ -60,7 +237,7 @@ router.get("/", async (req, res) => {
       });
     }
 
-    const items = await Inventory.find(filter).sort({ updatedAt: -1 });
+    const items = await Inventory.find(filter).sort({ updatedAt: -1, createdAt: -1 });
     res.setHeader("X-Total-Count", items.length);
     res.json(items);
   } catch (err) {
