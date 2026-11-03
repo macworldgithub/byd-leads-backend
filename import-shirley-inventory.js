@@ -430,6 +430,67 @@ async function importShirleyInventory() {
     }
   }
 
+  // 7. Sheet2.csv (Outbound store deliveries, demo vehicles, inbound, and actual deliveries)
+  const sheet2File = path.join(INVENTORY_DIR, 'DOC-20261102-WA0025-Sheet2.csv');
+  if (fs.existsSync(sheet2File)) {
+    console.log('  -> Parsing Sheet2.csv...');
+    const lines = fs.readFileSync(sheet2File, 'utf-8').split(/\r?\n/);
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      const row = parseCsvLine(lines[i]);
+      
+      // Col 0: demo VIN
+      const demoVin = cleanVin(row[0]);
+      if (demoVin) {
+        const v = getOrCreate(demoVin);
+        v.sources.add('Sheet2-Demo');
+        if (row[1] && !v.location) v.location = normalizeLocation(row[1]);
+        if (!v.status || v.status === 'Available') v.status = 'Demo';
+        v.condition = 'Demo';
+      }
+
+      // Col 5: Outbound store delivery VIN
+      const outVin = cleanVin(row[5]);
+      if (outVin) {
+        const v = getOrCreate(outVin);
+        v.sources.add('Sheet2-Outbound');
+        if (row[3] && !v.deliveryDate) v.deliveryDate = clean(row[3]);
+        if (row[4]) {
+          v.outBoundStore = clean(row[4]);
+          if (!v.location) v.location = normalizeLocation(row[4]);
+          if (!v.orderYard) v.orderYard = normalizeYard(row[4]);
+        }
+        if (!v.status || v.status === 'Available') v.status = 'Delivered';
+      }
+
+      // Col 8: Inbound date VIN
+      const inVin = cleanVin(row[8]);
+      if (inVin) {
+        const v = getOrCreate(inVin);
+        v.sources.add('Sheet2-Inbound');
+        if (row[7] && !v.inBoundDate) v.inBoundDate = clean(row[7]);
+        if (!v.status) v.status = 'In Stock';
+        if (!v.location) v.location = 'Warehouse';
+      }
+
+      // Col 10: Actual delivery VIN
+      const delVin = cleanVin(row[10]);
+      if (delVin) {
+        const v = getOrCreate(delVin);
+        v.sources.add('Sheet2-Delivery');
+        if (row[11] && !v.deliveryDate) v.deliveryDate = clean(row[11]);
+        if (!v.status || v.status === 'Available') v.status = 'Delivered';
+      }
+
+      // Col 13: Extra VIN column
+      const col13Vin = cleanVin(row[13]);
+      if (col13Vin) {
+        const v = getOrCreate(col13Vin);
+        v.sources.add('Sheet2-Vin');
+      }
+    }
+  }
+
   // Final pass: ensure every vehicle has model and location
   for (const v of vehiclesByVin.values()) {
     if (!v.model || v.model === 'Vehicle') {
