@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 const Appointment = require("../models/Appointment");
 
-
 // GET all appointments with pagination & location/yard filtering
 router.get("/", async (req, res) => {
   try {
