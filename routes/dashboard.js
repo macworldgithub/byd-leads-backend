@@ -5,6 +5,7 @@ const Appointment = require("../models/Appointment");
 const Conversation = require("../models/Conversation");
 const AuditTrail = require("../models/AuditTrail");
 const Inventory = require("../models/Inventory");
+const { inventoryScope } = require('../services/inventoryScope');
 
 function timeAgo(date) {
   const seconds = Math.floor((new Date() - new Date(date)) / 1000);
@@ -29,7 +30,7 @@ router.get("/", async (req, res) => {
     const dealerVal = dealer || yard || location;
     const leadFilter = {};
     const apptFilter = {};
-    const invFilter = {};
+    const invFilter = inventoryScope(req.user).filter;
     const convFilter = {};
 
     if (dealerVal && dealerVal !== "all" && dealerVal !== "All" && dealerVal !== "All Locations" && dealerVal !== "All Yards") {
@@ -42,7 +43,7 @@ router.get("/", async (req, res) => {
         { site: { $regex: safe, $options: "i" } },
         { yard: { $regex: safe, $options: "i" } },
       ];
-      invFilter.location = { $regex: safe, $options: "i" };
+      invFilter.$and = [{ $or: [{ location: { $regex: safe, $options: 'i' } }, { orderYard: { $regex: safe, $options: 'i' } }] }];
       convFilter.dealer = { $regex: safe, $options: "i" };
     }
 
@@ -133,12 +134,12 @@ router.get("/", async (req, res) => {
       recentLeads,
       automationLogs,
       inventoryStats: {
-        available: invAvailable || 660,
-        total: invTotal || 1052,
+        available: invAvailable,
+        total: invTotal,
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 

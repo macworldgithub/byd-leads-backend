@@ -1,18 +1,21 @@
 const express = require("express");
 const router = express.Router();
 const Inventory = require("../models/Inventory");
+const { inventoryScope, queryKey } = require('../services/inventoryScope');
 
 // ── In-Memory Cache for Stats and Filters (High Performance) ─────────────────
-let cachedFilters = null;
-let cachedFiltersExpires = 0;
-let cachedStats = null;
-let cachedStatsExpires = 0;
+const filtersCache = new Map();
+const statsCache = new Map();
 
 function invalidateCache() {
-  cachedFilters = null;
-  cachedFiltersExpires = 0;
-  cachedStats = null;
-  cachedStatsExpires = 0;
+  filtersCache.clear();
+  statsCache.clear();
+}
+
+function cacheResult(cache, key, value, duration) {
+  if (cache.size >= 100) cache.clear();
+  cache.set(key, { value, expires: Date.now() + duration });
+  return value;
 }
 
 // Helper to escape regex special characters
@@ -123,13 +126,16 @@ function buildStatusQuery(statusVal) {
 }
 
 // ── Fast Cached Summary Stats ────────────────────────────────────────────────
-async function getSummaryStats() {
+async function getSummaryStats(filter) {
   const now = Date.now();
-  if (cachedStats && now < cachedStatsExpires) {
-    return cachedStats;
+  const key = queryKey(filter);
+  const cached = statsCache.get(key);
+  if (cached && now < cached.expires) {
+    return cached.value;
   }
   try {
     const [raw] = await Inventory.collection.aggregate([
+      { $match: filter },
       {
         $facet: {
           total: [{ $count: "count" }],
@@ -144,7 +150,7 @@ async function getSummaryStats() {
       },
     ]).toArray();
 
-    cachedStats = {
+    const stats = {
       total: raw.total[0]?.count || 0,
       inStock: raw.inStock[0]?.count || 0,
       delivered: raw.delivered[0]?.count || 0,
@@ -154,8 +160,7 @@ async function getSummaryStats() {
       virtualyard: raw.virtualyard[0]?.count || 0,
       autogate: raw.autogate[0]?.count || 0,
     };
-    cachedStatsExpires = now + 60 * 1000; // 60s cache
-    return cachedStats;
+    return cacheResult(statsCache, key, stats, 60 * 1000);
   } catch (err) {
     return {
       total: 0,
@@ -173,57 +178,52 @@ async function getSummaryStats() {
 // ── GET /api/inventory/filters ───────────────────────────────────────────────
 router.get("/filters", async (req, res) => {
   try {
+    const scope = inventoryScope(req.user);
+    const key = queryKey(scope.filter);
     const now = Date.now();
-    if (cachedFilters && now < cachedFiltersExpires) {
-      return res.json(cachedFilters);
+    const cached = filtersCache.get(key);
+    if (cached && now < cached.expires) {
+      return res.json(cached.value);
     }
 
-    const [locations, orderYards, models] = await Promise.all([
-      Inventory.distinct("location"),
-      Inventory.distinct("orderYard"),
-      Inventory.distinct("specifications.model"),
+    const [locations, orderYards, models, legacyModels, statuses, platforms] = await Promise.all([
+      Inventory.distinct("location", scope.filter),
+      Inventory.distinct("orderYard", scope.filter),
+      Inventory.distinct("specifications.model", scope.filter),
+      Inventory.distinct("model", scope.filter),
+      Inventory.distinct("status", scope.filter),
+      Inventory.distinct("platform", scope.filter),
     ]);
 
     const cleanLocs = Array.from(new Set([...locations, ...orderYards]))
       .filter((l) => l && l !== "#N/A" && l !== "_" && l.length > 1)
       .sort();
 
-    const cleanModels = Array.from(new Set(models))
+    const cleanModels = Array.from(new Set([...models, ...legacyModels]))
       .filter((m) => m && m.length > 1)
       .sort();
 
-    const statuses = [
-      "In Stock",
-      "Delivered",
-      "Sold",
-      "In Transit",
-      "Demo",
-      "Display",
-      "On Hold",
-      "Damage",
-      "Allocated",
-    ];
-
-    cachedFilters = {
-      locations: cleanLocs,
-      statuses,
+    const filters = {
+      locations: scope.site ? [scope.site] : cleanLocs,
+      statuses: statuses.filter(Boolean).sort(),
       models: cleanModels,
-      platforms: ["shirley", "virtualyard", "autogate", "dealer_studio", "manual"],
+      platforms: platforms.filter(Boolean).sort(),
+      site: scope.site,
     };
-    cachedFiltersExpires = now + 5 * 60 * 1000; // 5m cache
-    res.json(cachedFilters);
+    cacheResult(filtersCache, key, filters, 5 * 60 * 1000);
+    res.json(filters);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
 // ── GET /api/inventory/stats ─────────────────────────────────────────────────
 router.get("/stats", async (req, res) => {
   try {
-    const stats = await getSummaryStats();
+    const stats = await getSummaryStats(inventoryScope(req.user).filter);
     res.json(stats);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
@@ -245,7 +245,8 @@ router.get("/", async (req, res) => {
       paginated,
     } = req.query;
 
-    const andClauses = [];
+    const scope = inventoryScope(req.user);
+    const andClauses = Object.keys(scope.filter).length ? [scope.filter] : [];
 
     // Model filter
     if (model && model !== "all" && model !== "All Models" && model !== "All") {
@@ -317,7 +318,7 @@ router.get("/", async (req, res) => {
         .limit(pageSize)
         .lean(),
       Inventory.countDocuments(filter),
-      getSummaryStats(),
+      getSummaryStats(scope.filter),
     ]);
 
     const totalPages = Math.ceil(total / pageSize) || 1;
@@ -335,7 +336,7 @@ router.get("/", async (req, res) => {
       stats,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
